@@ -34,7 +34,7 @@ repos:
       - id: check-hooks-apply
         name: Check if all hooks apply to the repository
   - repo: https://github.com/thlorenz/doctoc.git
-    rev: v2.2.0
+    rev: v2.4.1
     hooks:
       - id: doctoc
         name: Add TOC for Markdown and RST files
@@ -48,7 +48,7 @@ repos:
           - "--maxlevel"
           - "3"
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: check-merge-conflict
         name: Check that merge conflicts are not being committed
@@ -75,7 +75,7 @@ repos:
   # the hook never silently rewrites files; CI surfaces typos as
   # errors instead.
   - repo: https://github.com/crate-ci/typos
-    rev: v1.45.2
+    rev: v1.46.2
     hooks:
       - id: typos
         name: typos
