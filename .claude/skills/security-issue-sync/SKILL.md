@@ -1961,6 +1961,108 @@ before moving on to the next item. Use:
   comment's *"the JSON has been regenerated to include the archive
   URL and pushed to the record"* claim is true at the moment the
   RM reads it.
+- **Wrap-up comment (post-close):** load
+  [`tools/<cve-tool>/release-manager-wrap-up-comment.md`](../../../tools/vulnogram/release-manager-wrap-up-comment.md)
+  and post it as the **last** action of the *Advisory archived on
+  `<users-list>`* combined apply, right after the tracker close
+  succeeds. The comment is the residual-manual-steps ping to the RM
+  (archive from the `Announced` column, and — conditionally —
+  close the milestone).
+
+  Placeholders to substitute: `CVE_ID`, `RM_HANDLE` (from the
+  release-manager identity resolved in Step 1f / `release-trains.md`),
+  `TRACKER_URL`, `BOARD_URL` (project-board URL with
+  `?filterQuery=status%3AAnnounced` appended),
+  `PUBLISH_TIMESTAMP` (from the just-completed
+  `vulnogram-api-record-publish` call), `ADVISORY_URL` (the
+  archive URL captured in the same apply), and the conditional
+  `MILESTONE_BULLET` — see below.
+
+  **`MILESTONE_BULLET` is the only conditional in the template.**
+  Resolve via a sibling-state check right before substitution:
+
+  ```bash
+  ms=$(gh issue view <N> --repo <tracker> --json milestone \
+    --jq '.milestone.number // empty')
+
+  if [ -n "$ms" ]; then
+    # The just-closed tracker is no longer in the open list, so
+    # `open` here counts SIBLINGS still open on the same milestone.
+    open=$(gh issue list --repo <tracker> --milestone "$ms" \
+      --state open --json number --jq 'length')
+    if [ "$open" -eq 0 ]; then
+      ms_url=$(gh api repos/<tracker>/milestones/$ms --jq '.html_url')
+      ms_title=$(gh api repos/<tracker>/milestones/$ms --jq '.title')
+      bullet="Close the [\`$ms_title\`]($ms_url) milestone — every tracker on it is now closed too."
+    else
+      bullet=""
+    fi
+  else
+    bullet=""
+  fi
+  ```
+
+  Substitute into the template, write the result to a temp file,
+  then POST a fresh comment — there is no PATCH recovery for this
+  template (the tracker is closed by the time it posts;
+  informational only). Idempotency keys on the marker
+  `<!-- apache-steward: release-manager-wrap-up v1 -->`; if the
+  marker is already present on the tracker, skip the post
+  entirely.
+
+  Before posting, apply the same bare-name → `@handle` scrub used
+  for the rollup PATCH and hand-off comment, so the `RM_HANDLE`
+  substitution actually notifies the release manager.
+- **Vulnogram state transition (`REVIEW → PUBLIC`):** invoke the
+  [`vulnogram-api-record-publish`](../../../tools/vulnogram/oauth-api/README.md)
+  CLI to flip the record's `CNA_private.state` over the OAuth API.
+  The default refuses the transition unless the current state is
+  `REVIEW`; widen with `--allow-state` only when explicitly
+  justified (e.g. a record that has already been moved to `READY`
+  manually):
+
+  ```bash
+  uv run --project <framework>/tools/vulnogram/oauth-api \
+    vulnogram-api-record-publish --cve-id <CVE-YYYY-NNNNN>
+  ```
+
+  Use this action only as part of the *Advisory archived on
+  `<users-list>`* combined apply in [Step 2b](#step-2--build-a-proposal-do-not-apply-anything-yet) —
+  the trigger is *"the advisory has provably shipped on
+  `<users-list>`"*, which is the real-world signal a human would
+  use before clicking the Vulnogram `REVIEW → PUBLIC` button.
+  Outside that trigger, the state transition stays manual.
+
+  Idempotent: re-running on a record already in `PUBLIC` exits 0
+  with an informational message. Exit-code interpretation matches
+  `record-update` (2 = session expired, 3 = unexpected state,
+  4 = CSRF, 5 = save failed, 6 = other API error, 7 = unexpected
+  envelope). On a non-zero exit, the combined apply stops and the
+  failure surfaces in the recap; the partial state (URL captured,
+  labels flipped, JSON re-pushed, tracker NOT yet closed) is the
+  right recovery starting point for the next sync once the
+  underlying issue is resolved.
+- **Advisory short-summary extraction:** when the *Advisory
+  archived on `<users-list>`* combined apply fires (Step 2b row),
+  fetch the archived advisory email body from the
+  `lists.apache.org` archive and extract the public-facing short
+  summary into the *Short public summary for publish* body field
+  **before** the Step 5 JSON regen.
+
+  Heuristic — read the archive entry's JSON, extract the prose
+  block between the CVE header line (matching `^CVE-\d{4}-\d+:`)
+  and the first *Affected version range:* / *Affected versions:*
+  block, trim leading/trailing blank lines, collapse internal blank
+  runs to a single blank line. Surface the extracted summary in
+  the Step 2 proposal so the user can spot any over- or
+  under-extraction before the body-field update applies; accept a
+  free-form override at re-confirmation if the heuristic misfires.
+
+  **Why ahead of Step 5's regen.** The regeneration step reads the
+  body fields as source of truth; updating *Short public summary
+  for publish* before regen means the re-pushed JSON carries the
+  published summary verbatim (lock-step). Updating after regen
+  drifts the pushed JSON from the body until the next sync.
 - **Close / reopen:** `gh issue close <N> --repo <tracker> --reason completed` (or `not planned`).
   When this is a GitHub-backed tracker that uses a project board,
   **always** follow a successful close with the **archive-from-board**
