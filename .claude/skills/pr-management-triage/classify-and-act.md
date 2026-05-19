@@ -142,9 +142,47 @@ Action verbs are defined in [`actions.md`](actions.md).
   NOT strip the label: those classify the regression as
   transient (flaky CI, missing base merge, reviewer hasn't
   responded) and the label is still informative if the
-  follow-up succeeds. Implementation: see
-  [`actions.md#draft`](actions.md#draft--convert-to-draft-and-post-violations-comment)
-  and [`actions.md#comment`](actions.md#comment--post-violations--stale-review--ping-comment).
+  follow-up succeeds.
+
+  **Exception — merit-discussion-in-flight.** If
+  [`merit_discussion_thread_present`](#merit_discussion_thread_present)
+  holds on the regressed PR, the strip-ready-on-downgrade
+  rule does **not** fire. Additionally:
+
+    - A `draft` action skips the `gh pr ready --undo` step
+      (the PR stays out of draft). The violations comment is
+      still posted so mechanical issues remain surfaced for
+      the author. The action effectively degrades to a
+      `comment` action that preserves the label.
+    - A `close` action skips the close step (the PR stays
+      open). The comment is still posted; the
+      quality-violations label is still applied. Closing a PR
+      with an active maintainer review discussion is more
+      destructive than the queue-pressure problem `close`
+      exists to solve.
+    - A `comment` action posts the violations comment but
+      does not strip the label.
+
+  Rationale: the `ready for maintainer review` label exists
+  to attract senior eyes, and an unresolved maintainer review
+  thread is exactly the moment those eyes are most valuable.
+  Stripping the label or pushing the PR back to draft
+  mid-discussion makes it disappear from the maintainer queue
+  at the worst possible time. CI red / lint failures / merge
+  conflicts and a live design debate are orthogonal: a
+  maintainer can weigh in on design even when CI is red. The
+  precondition is deliberately broad — contributor-author
+  threads alone do not satisfy it (those are not the merit
+  signal the label defers to), but any maintainer-opened
+  unresolved thread does, regardless of body length or when
+  it was opened relative to the label-add. Source: user-scope
+  feedback memory
+  `feedback-ready-for-maintainer-review-label`.
+
+  Implementation: see
+  [`actions.md#draft`](actions.md#draft--convert-to-draft-and-post-violations-comment),
+  [`actions.md#comment`](actions.md#comment--post-violations--stale-review--ping-comment),
+  and [`actions.md#close`](actions.md#close--close-with-comment-and-quality-violations-label).
 
 ---
 
@@ -240,6 +278,34 @@ but only `failed_checks` feeds the decision table.
 `has_deterministic_signal` is true AND the *only* signal that
 fired is unresolved threads (`statusCheckRollup.state` is
 `SUCCESS`, `mergeable != CONFLICTING`).
+
+### `merit_discussion_thread_present`
+
+True when the PR has at least one unresolved review thread
+whose first comment is from a `COLLABORATOR`/`MEMBER`/`OWNER`
+(the same collaborator-author qualifier as
+[`unresolved_threads_only`](#unresolved_threads_only)).
+
+This is the "active maintainer review discussion" signal. No
+timing qualifier is applied — a substantive design / approach
+/ scope / correctness discussion can have started either
+before or after the `ready for maintainer review` label was
+added, and in either case the label must not be stripped
+while the discussion is in flight. The precondition
+deliberately does not filter by body length or thread
+content: an explicit maintainer act of opening a review
+thread is treated as substantive engagement on its own.
+Contributor-author unresolved threads do NOT satisfy this
+precondition (mirrors the
+[`unresolved_threads_only`](#unresolved_threads_only)
+collaborator qualifier — contributor-to-contributor side
+chatter is not a merit discussion the label should defer to).
+
+Source: user-scope feedback memory
+`feedback-ready-for-maintainer-review-label`. See the
+[`strip-ready-on-downgrade`](#hard-rules-cross-cutting-the-table)
+hard rule for how this precondition gates the label-strip,
+draft-conversion, and close behavior on a regressed PR.
 
 ### `unresolved_threads_only_likely_addressed`
 
