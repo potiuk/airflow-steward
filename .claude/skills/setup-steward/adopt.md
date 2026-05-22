@@ -71,6 +71,40 @@ between automatically:
    result as `<adopter-skills-dir>` for the rest of this
    flow.
 
+   If detection returns *"ambiguous → propose Pattern D
+   consolidation"* (both `.claude/skills/` and
+   `.github/skills/` exist as regular directories with
+   independent, non-aliased content), run the
+   **Pre-Pattern-D consolidation** flow described under
+   [section D of `conventions.md`](conventions.md#d-single-directory-symlink--one-of-claudeskills--githubskills-is-a-symlink-to-the-other)
+   before continuing:
+
+   - List the skills in each directory with their content
+     fingerprint (real dir vs symlink, target if symlink,
+     SKILL.md presence).
+   - Flag any name collisions where the two sides have
+     different content for the same name.
+   - Use a structured prompt (`AskUserQuestion` when the
+     harness offers one) with three options: **D.1**
+     (consolidate under `.github/skills/`), **D.2**
+     (consolidate under `.claude/skills/`), or **decline**
+     (fall back to Pattern A treating `.claude/skills/` as
+     canonical and leaving `.github/skills/` alone).
+   - On D.1 / D.2 confirmation: move every skill from the
+     side that will become the symlink into the side that
+     will become the real directory (resolving any flagged
+     name collisions first — never auto-rename adopter
+     content), then replace the now-empty side with a
+     relative symlink to the other side, then re-run
+     detection to confirm the pattern is now D.
+   - If the user declines or unresolved name collisions
+     block consolidation, fall back to Pattern A and pin
+     `<adopter-skills-dir>` = `.claude/skills/` as usual.
+
+   The consolidation is a one-time, deliberate layout
+   change; the adopt flow surfaces every step before
+   writing.
+
 ## Step 1 — Detect adoption shape
 
 ```text
@@ -284,25 +318,73 @@ fetched_at:       <ISO-8601 timestamp>
 The bootstrap recipe wrote these already; this step is
 idempotent — re-add them if they're missing.
 
+**Base entries — always needed**:
+
 ```text
 /.apache-steward/
 /.apache-steward.local.lock
 /.claude/settings.local.json
-/.claude/skills/security-*
-/.claude/skills/pr-management-*
-/.claude/skills/issue-*
-/.claude/skills/setup-isolated-setup-*
-/.claude/skills/setup-override-upstream
-/.claude/skills/setup-shared-config-sync
-/.claude/skills/list-steward-*
-/.github/skills/security-*
-/.github/skills/pr-management-*
-/.github/skills/issue-*
-/.github/skills/setup-isolated-setup-*
-/.github/skills/setup-override-upstream
-/.github/skills/setup-shared-config-sync
-/.github/skills/list-steward-*
 ```
+
+**Symlink-pattern entries — vary by adopter
+[skills-dir convention](conventions.md)**:
+
+- **Pattern A (flat)** — only the `.claude/skills/...` lines:
+
+  ```text
+  /.claude/skills/security-*
+  /.claude/skills/pr-management-*
+  /.claude/skills/issue-*
+  /.claude/skills/setup-isolated-setup-*
+  /.claude/skills/setup-override-upstream
+  /.claude/skills/setup-shared-config-sync
+  /.claude/skills/list-steward-*
+  ```
+
+- **Pattern B (double-symlinked)** — both `.claude/skills/...`
+  AND `.github/skills/...` lines, because each framework skill
+  has two physical symlinks (outer at `.claude/skills/<n>`,
+  inner at `.github/skills/<n>`):
+
+  ```text
+  /.claude/skills/security-*
+  /.claude/skills/pr-management-*
+  /.claude/skills/issue-*
+  /.claude/skills/setup-isolated-setup-*
+  /.claude/skills/setup-override-upstream
+  /.claude/skills/setup-shared-config-sync
+  /.claude/skills/list-steward-*
+  /.github/skills/security-*
+  /.github/skills/pr-management-*
+  /.github/skills/issue-*
+  /.github/skills/setup-isolated-setup-*
+  /.github/skills/setup-override-upstream
+  /.github/skills/setup-shared-config-sync
+  /.github/skills/list-steward-*
+  ```
+
+- **Pattern D (single directory symlink)** — only the
+  *canonical-side* `.../skills/...` lines. With D.1
+  (canonical = `.github/skills/`):
+
+  ```text
+  /.github/skills/security-*
+  /.github/skills/pr-management-*
+  /.github/skills/issue-*
+  /.github/skills/setup-isolated-setup-*
+  /.github/skills/setup-override-upstream
+  /.github/skills/setup-shared-config-sync
+  /.github/skills/list-steward-*
+  ```
+
+  With D.2 (canonical = `.claude/skills/`), mirror the same
+  list under `.claude/skills/` instead. Pattern D does not
+  need ignore lines on the *symlinked* side because that side
+  is itself a single tracked symlink — git does not descend
+  into it, so the symlinked-side paths match no tracked file.
+
+- **Pattern C (none yet)** — same as the pattern the user
+  picks during adopt (defaults to A).
 
 The `setup-override-upstream`, `setup-shared-config-sync`,
 `setup-isolated-setup-*`, and `list-steward-*` entries are
@@ -319,9 +401,6 @@ populates with the project-root sandbox-allowlist entry (and
 that each worktree carries independently). Most adopters
 already gitignore this file by Claude Code convention; the
 adopt flow checks for the line and adds it if missing.
-
-Mirror under `.github/skills/` only if the adopter uses the
-double-symlinked convention.
 
 ## Step 8 — Wire up the framework-skill symlinks
 
@@ -349,11 +428,24 @@ adoption path where the committed lock only records the
 opt-in pick. Compute the family glob fresh from the snapshot
 contents on disk — do not hard-code skill names.
 
-If the adopter uses the double-symlinked convention
-(see [`conventions.md`](conventions.md)), create both
-layers — the inner one in `.github/skills/` points at the
-snapshot, the outer `.claude/skills/` points at the
-inner. Both gitignored.
+Per-pattern symlink wiring (see
+[`conventions.md`](conventions.md)):
+
+- **Pattern A (flat)** — one symlink per skill at
+  `.claude/skills/<n>` → snapshot. Gitignored.
+- **Pattern B (double-symlinked)** — two symlinks per skill:
+  the inner one in `.github/skills/<n>` → snapshot, the outer
+  `.claude/skills/<n>` → `../../.github/skills/<n>/`. Both
+  gitignored.
+- **Pattern D (single directory symlink)** — one symlink per
+  skill at the *canonical-side* `<canonical>/skills/<n>` →
+  snapshot. **Skip the symlinked side entirely** — one of
+  `.claude/skills` / `.github/skills` is itself a directory
+  symlink into the other, so the symlinked-side path is
+  automatically resolved. With D.1 the canonical side is
+  `.github/skills/`; with D.2 it is `.claude/skills/`.
+  Gitignored.
+- **Pattern C (none yet)** — same as A.
 
 **Never overwrite an existing committed skill** of the same
 name. Surface conflicts and stop. `setup-steward` itself is
@@ -662,8 +754,8 @@ framework before they hit a "skill not found" error:
    Trim the skill-family list to what was actually picked in
    Step 5 (only mention `security-*` if the adopter installed
    that family, etc.). Adjust the skill paths to the adopter's
-   convention (flat vs double-symlinked — see
-   [`conventions.md`](conventions.md)). Skip this sub-step
+   convention (flat / double-symlinked / single-directory-symlink
+   — see [`conventions.md`](conventions.md)). Skip this sub-step
    entirely if `README.md` does not exist.
 
 2. **`AGENTS.md` (agent-facing detail, ONLY if the file
@@ -871,11 +963,13 @@ Committed (you'll see in `git status`):
 Gitignored (do NOT commit):
   .apache-steward/
   .apache-steward.local.lock
-  .claude/skills/{security,pr-management}-*            # opt-in families
-  .claude/skills/setup-isolated-setup-*                # always-on
-  .claude/skills/{setup-override-upstream,setup-shared-config-sync}  # always-on
-  .claude/skills/list-steward-*                        # always-on
-  (and same patterns under .github/skills/ for double-symlinked layouts)
+  <adopter-skills-dir>/{security,pr-management}-*            # opt-in families
+  <adopter-skills-dir>/setup-isolated-setup-*                # always-on
+  <adopter-skills-dir>/{setup-override-upstream,setup-shared-config-sync}  # always-on
+  <adopter-skills-dir>/list-steward-*                        # always-on
+  # Pattern A:  <adopter-skills-dir> = .claude/skills/
+  # Pattern B:  <adopter-skills-dir> = both .claude/skills/ AND .github/skills/
+  # Pattern D:  <adopter-skills-dir> = .github/skills/ only
 ```
 
 Then suggest the user `git add` the committed files and open
