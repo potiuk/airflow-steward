@@ -303,6 +303,22 @@ original report, earliest first)
 confirmed, or the placeholder form when unconfirmed; the merge
 does not silently re-synthesize credits)
 
+**Apply the [bot/AI credit policy](../../../tools/vulnogram/bot-credits-policy.md)
+when consolidating.** If either tracker carries a credit line that
+matches the bot detection rule (`*[bot]` suffix, known-bot list,
+`*-bot`/`*-ai`/`*-agent`/`*-gpt` / `*scanner*` / `*automat*`
+suffix patterns, automation-name list), **do not** propagate that
+line into the kept tracker's *Reporter credited as* field. Instead,
+surface in the proposal *"skipped credit (during merge): `<line>`
+(matches bot policy — `<rule>`)"* with the source tracker number.
+If the drop tracker has an inbound reporter thread to reply on,
+also propose the policy's *clarification-reply* Gmail draft asking
+whether the bot/AI handle is the intended credit. The user can
+override per the policy doc. Manual credits that a human
+security-team member typed in (visible in the issue timeline) are
+always preserved verbatim — the filter only fires on credit lines
+that were auto-extracted upstream.
+
 ```markdown
 ### PR with the fix
 
