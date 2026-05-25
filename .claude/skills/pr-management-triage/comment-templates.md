@@ -420,6 +420,58 @@ If the author is silent past the cooldown, the
 [stale author-confirm-request sweep](stale-sweeps.md#sweep-5--stale-author-confirm-request)
 takes over.
 
+### Variant: maintainer-sweep handback
+
+Use when
+[`<project-config>/pr-management-config.md`](../../../projects/_template/pr-management-config.md)
+sets `confirmation_handback_mode: maintainer-sweep` (see the
+"Workflow choices" section of that file).
+
+In this variant the "If yes" branch directs the author to
+reply with a short `yes / ready` rather than to ping the
+reviewer. The next triage sweep then classifies the PR via
+[`author_confirmation_received`](classify-and-act.md#author_confirmation_received)
+and offers the triaging maintainer the
+[`mark-ready`](actions.md#mark-ready--add-ready-for-maintainer-review-label)
+action — same downstream flow as the default mode, just
+initiated by a short author confirmation instead of an
+author-led reviewer ping.
+
+```markdown
+@<author> — There are <N> unresolved review thread(s) on this PR, and you have engaged with each one (post-review commits and/or in-thread replies). Could you confirm whether you believe the feedback is fully addressed and the PR is ready for maintainer review confirmation?
+
+If yes, reply here (a short `yes / ready` is fine) and a <PROJECT> maintainer will pick the PR up from the review queue on the next sweep.
+
+If you are still working on a thread, please reply with what is outstanding so the threads stay unresolved on purpose.
+
+<ai_attribution_footer>
+```
+
+Notes on the variant:
+
+- **No `<reviewer_logins>` in the first paragraph.** In this
+  variant the reviewers are not part of the next-action loop —
+  the maintainer sweep is — so mentioning them by name adds
+  noise without changing what the author needs to do.
+- **The marker string `ready for maintainer review
+  confirmation`** still appears verbatim. Both variants rely
+  on the same
+  [`viewer_confirmation_request_present`](classify-and-act.md#viewer_confirmation_request_present)
+  detector on subsequent sweeps.
+- **`<PROJECT>` placeholder** in the "If yes" sentence — read
+  from
+  [`<project-config>/pr-management-triage-comment-templates.md`](../../../projects/_template/pr-management-triage-comment-templates.md)
+  (same source as the AI-attribution footer's `<PROJECT>`).
+
+When to pick this variant: your project runs a regular
+maintainer triage cadence that scans for `yes / ready`
+replies, and you prefer the contributor's confirmation cost
+to be a short reply rather than thread bookkeeping plus a
+reviewer ping. The default `reviewer-ping` variant is the
+right choice when reviewers themselves apply the
+ready-for-maintainer-review label or no maintainer-sweep
+cadence exists.
+
 ---
 
 ## Stale draft close

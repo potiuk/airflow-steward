@@ -6,6 +6,7 @@
   - [Identifiers](#identifiers)
   - [Project-specific labels](#project-specific-labels)
   - [Grace windows](#grace-windows)
+  - [Workflow choices](#workflow-choices)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -67,3 +68,14 @@ chance to look at yet.
 | Stale-review-ping cooldown | 7 days | 7 days |
 | Stale-workflow-approval threshold | 28 days | 28 days |
 | Stale-Copilot-review threshold | 7 days | 7 days |
+
+## Workflow choices
+
+Some triage actions branch on a project-specific workflow
+preference rather than a quantitative threshold. Each key
+below picks one of the documented variants; leave at the
+default to use the standard variant.
+
+| Key | Default | Notes |
+|---|---|---|
+| `confirmation_handback_mode` | `reviewer-ping` | `request-author-confirmation` action's "If yes" branch. `reviewer-ping`: the author marks threads resolved and `@`-pings the reviewer for a final look + label. `maintainer-sweep`: the author replies with a short `yes / ready` and the next triage sweep promotes the PR to the maintainer review queue. Pick `maintainer-sweep` if your project runs a regular maintainer triage cadence and prefers a lightweight contributor confirmation over a reviewer-driven hand-back. See [`comment-templates.md#request-author-confirmation`](../../.claude/skills/pr-management-triage/comment-templates.md) for both bodies. |
