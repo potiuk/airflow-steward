@@ -26,9 +26,19 @@ capabilities the skills use to read ASF mailing-list archives
 directly via an MCP server, without going through a personal Gmail
 subscription.
 
-A project opts into this tool by naming it in its manifest under
-*Tools enabled*. The adopting project manifest lives at
-[`../../<project-config>/project.md`](../../<project-config>/project.md#tools-enabled).
+A project opts into this tool by listing it in its manifest under
+*Mail sources*. The adopting project manifest lives at
+[`../../<project-config>/project.md`](../../<project-config>/project.md#mail-sources).
+
+Ponymail's capability set per the
+[backend contract](../mail-source/contract.md#capability-matrix) is
+**read-only**: `list_recent_threads`, `read_thread`, `thread_url`.
+It does **not** support `create_draft` / `list_drafts` /
+`list_sent_since` — an adopter that names Ponymail as `primary` must
+also list a draft-capable backend (typically Gmail or an IMAP
+adapter with a writable Drafts mailbox) as
+`preferred for create_draft, list_drafts` so the skills' reply-draft
+operations have a place to land.
 
 The backing MCP server is [`rbowen/ponymail-mcp`](https://github.com/rbowen/ponymail-mcp)
 (Python) which wraps the public PonyMail HTTP API at

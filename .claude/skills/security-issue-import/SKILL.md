@@ -145,18 +145,33 @@ Drift severity:
 
 Before running, the skill needs:
 
-- **Gmail MCP** connected to a Gmail account subscribed to
-  `<security-list>`. The skill reads threads and
-  creates drafts through this MCP; without it, there is no way
-  to discover new reports.
+- **At least one configured mail-source backend** per
+  [`<project-config>/project.md → Mail sources`](../../../<project-config>/project.md#mail-sources).
+  The skill treats every backend the same way — through the
+  abstract operations defined in
+  [`tools/mail-source/contract.md`](../../../tools/mail-source/contract.md)
+  (`list_recent_threads`, `read_thread`, `list_drafts`,
+  `list_sent_since`, `create_draft`, `thread_url`). Reference
+  adapters: [`gmail`](../../../tools/gmail/tool.md) (full
+  read+write), [`ponymail`](../../../tools/ponymail/tool.md)
+  (read-only ASF archive),
+  [`imap`](../../../tools/mail-source/imap/README.md) (stub),
+  [`mbox`](../../../tools/mail-source/mbox/README.md) (read-only
+  offline archive — stub). To **discover new reports** the
+  configured backends must collectively cover
+  `list_recent_threads` + `read_thread`; to **draft the
+  receipt-of-confirmation reply in Step 7** they must
+  additionally cover `create_draft`. If no available backend
+  covers `create_draft`, Step 7 surfaces a one-line *"no draft
+  backend available"* note and the user composes the reply by
+  hand.
 - **`gh` CLI authenticated** (`gh auth status` returns OK) with
   collaborator access to `<tracker>`. The skill calls
   `gh issue create` and `gh search issues` directly.
 
 See
 [Prerequisites for running the agent skills](../../../docs/prerequisites.md#prerequisites-for-running-the-agent-skills)
-in `docs/prerequisites.md` for the overall setup and the
-ponymail-mcp alternative on the horizon.
+in `docs/prerequisites.md` for the overall setup.
 
 ---
 
@@ -164,34 +179,45 @@ ponymail-mcp alternative on the horizon.
 
 Before touching any candidate thread, verify:
 
-1. **Gmail MCP is reachable.** Run a trivial
-   `mcp__claude_ai_Gmail__search_threads` with `pageSize: 1` and
-   confirm it returns (not an auth error). If it fails, **stop
-   immediately** and tell the user to configure Gmail MCP. Gmail
-   is the load-bearing inbox + the only backend that can create
-   the receipt-of-confirmation drafts this skill produces, so a
-   Gmail failure is always a stop.
+1. **Mail-source backends from `<project-config>/project.md →
+   Mail sources` are available.** For each declared backend, run
+   the backend's trivial health probe (per its adapter doc —
+   Gmail: `mcp__claude_ai_Gmail__search_threads` with `pageSize:
+   1`; Ponymail: `mcp__ponymail__auth_status()`; IMAP: a
+   `CAPABILITY` against the configured host; mbox: a `stat` on
+   the archive path) and record the result in the skill's
+   observed-state bag. Apply the
+   [contract's resolution rule](../../../tools/mail-source/contract.md#resolution-rule--which-backend-runs-an-operation)
+   to figure out which backend serves which op for this run.
+
+   * **`mandatory: yes` backend unavailable** → **stop
+     immediately**. Surface *"mandatory mail-source backend
+     `<name>` unavailable: `<reason>`; run aborted"*. The user
+     fixes the auth / connection and re-invokes.
+   * **`mandatory: no` backend unavailable** → continue with the
+     remaining backends. If the resolution then leaves an
+     operation with no provider (e.g. no available backend
+     supports `create_draft`), the skill records *"no `<op>`
+     backend available"* in the observed-state bag and the
+     relevant downstream step omits that proposal with a clear
+     hand-back to the user.
+   * **Every declared backend healthy** → proceed; the
+     observed-state bag records one provider per op so every
+     dispatch later is unambiguous.
 2. **`gh` is authenticated and has access.** Run
    `gh api repos/<tracker> --jq .name`; if it errors
    (401, 403, 404), stop and tell the user to log in with
    `gh auth login` or get added to `<tracker>`.
-3. **PonyMail MCP status** (opt-in; primary read path when
-   enabled) — read `.apache-steward-overrides/user.md` → `tools.ponymail`. If
-   `enabled: true`, call `mcp__ponymail__auth_status()` once and
-   record `ponymail_enabled` + `ponymail_authenticated` in the
-   skill's observed-state bag. **When authenticated, downstream
-   steps (1 candidate listing, 2b prior-rejection search) treat
-   PonyMail MCP as the primary read path** and use Gmail as the
-   fallback — except that Gmail remains the primary source for
-   *just-arrived* inbound mail where inbox latency beats archive
-   indexing delay (see per-step guidance below). Gmail always
-   remains the draft-composition backend; PonyMail MCP has no
-   write path. When PonyMail MCP is not enabled, not
-   authenticated, or its tools are not available in the current
-   session, proceed Gmail-only (no stop, one-line warning only
-   when enabled but unauthenticated). See
-   [`tools/ponymail/tool.md`](../../../tools/ponymail/tool.md)
-   for the one-time setup instructions.
+3. **(Legacy guidance — kept for the reference adopter.)** The
+   reference adopter (`airflow-s`) lists `gmail` as primary
+   `mandatory: yes` and `ponymail` as fallback `mandatory: no`,
+   which produces the behaviour the rest of this skill describes:
+   Gmail handles reads of just-arrived inbound mail and all draft
+   creation, Ponymail handles archive lookups and degrades quietly
+   when unauthenticated. Adopters with different `Mail sources`
+   tables will see the resolution rule pick differently — the
+   step-by-step references to "Gmail" below should be read as
+   "the backend the resolution rule picked for the relevant op".
 4. **Privacy-LLM contract.** This skill reads `<security-list>`
    bodies that may contain third-party PII the reporter
    discloses about other people. Run the gate-check first —
@@ -226,13 +252,14 @@ Before touching any candidate thread, verify:
    when (and only when) the draft references a third-party
    identifier.
 
-If the Gmail or `gh` check fails (PonyMail degrades quietly), do
-**not** proceed — the skill would fail mid-flow otherwise, leaving
-half-built state (a draft on the wrong thread, or a tracker with
-no receipt reply). Fail fast instead. A privacy-llm pre-flight
-failure is also a hard stop — the redactor's mapping store and
-the collaborator-source lookup are both load-bearing for every
-subsequent body read.
+If a `mandatory: yes` mail-source backend or the `gh` check fails,
+do **not** proceed — the skill would fail mid-flow otherwise,
+leaving half-built state (a draft on the wrong thread, or a tracker
+with no receipt reply). Fail fast instead. `mandatory: no` backends
+degrade quietly per the contract's resolution rule. A privacy-llm
+pre-flight failure is also a hard stop — the redactor's mapping
+store and the collaborator-source lookup are both load-bearing for
+every subsequent body read.
 
 ---
 

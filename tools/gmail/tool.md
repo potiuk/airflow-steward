@@ -17,11 +17,20 @@
 
 This directory documents the **Gmail** tool adapter — the set of
 capabilities the skills use when the adopting project declares Gmail
-as its inbound-email / draft-creation backend.
+as a backend in its
+[mail-source configuration](../mail-source/contract.md).
 
-A project opts into this tool by naming it in its manifest under
-*Tools enabled*. For the adopting project see
-[`../../<project-config>/project.md`](../../<project-config>/project.md#tools-enabled).
+A project opts into this tool by listing it in its manifest under
+*Mail sources*. For the adopting project see
+[`../../<project-config>/project.md`](../../<project-config>/project.md#mail-sources).
+
+Gmail's full capability set per the
+[backend contract](../mail-source/contract.md#capability-matrix):
+`list_recent_threads`, `read_thread`, `list_drafts`, `list_sent_since`,
+`create_draft`, `thread_url`. It is therefore the only in-tree
+adapter that supports drafting; an adopter that designates a
+read-only primary (e.g. Ponymail, mbox) typically also lists Gmail
+as `preferred for create_draft, list_drafts`.
 
 ## What this tool provides
 

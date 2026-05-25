@@ -319,9 +319,19 @@ or an ambiguous credit line).
 
 The skill needs:
 
-- **Gmail MCP** connected to an account subscribed to
-  `<security-list>`. Required for reading the reporter
-  thread and drafting status updates.
+- **At least one configured mail-source backend** per
+  [`<project-config>/project.md → Mail sources`](../../../<project-config>/project.md#mail-sources),
+  collectively covering `read_thread` (for the reporter thread)
+  and — if status-update drafts will be proposed — `create_draft`.
+  The skill uses the abstract operations defined in
+  [`tools/mail-source/contract.md`](../../../tools/mail-source/contract.md)
+  and the contract's
+  [resolution rule](../../../tools/mail-source/contract.md#resolution-rule--which-backend-runs-an-operation)
+  to pick a backend per op at run time. Reference adapters:
+  [`gmail`](../../../tools/gmail/tool.md),
+  [`ponymail`](../../../tools/ponymail/tool.md),
+  [`imap`](../../../tools/mail-source/imap/README.md),
+  [`mbox`](../../../tools/mail-source/mbox/README.md).
 - **`gh` CLI authenticated** with collaborator access to
   `<tracker>` (read + issue-write) and `<upstream>`
   (read is enough — the sync only reads PR state on that repo).
@@ -339,12 +349,18 @@ in `docs/prerequisites.md` for the overall setup.
 
 Before reading any tracker state, verify:
 
-1. **Gmail MCP is reachable** — trivial
-   `mcp__claude_ai_Gmail__search_threads` with `pageSize: 1`; an
-   auth error here means Gmail MCP is not configured, stop and
-   say so. Gmail is the load-bearing backend for inbox reads and
-   the only backend that can create drafts, so a Gmail failure is
-   always a stop.
+1. **Mail-source backends per
+   `<project-config>/project.md → Mail sources` are available** —
+   for each declared backend run its trivial health probe (per its
+   adapter doc), record the result in the observed-state bag, and
+   apply the
+   [contract's resolution rule](../../../tools/mail-source/contract.md#resolution-rule--which-backend-runs-an-operation)
+   to figure out which backend serves which op for this run. A
+   `mandatory: yes` backend that is unavailable is a **hard stop**;
+   `mandatory: no` backends degrade quietly and the affected ops
+   are skipped per the contract. The reference adopter
+   (`airflow-s`) has Gmail as `mandatory: yes` primary, so for the
+   reference flow a Gmail-MCP failure is always a stop.
 2. **`gh` is authenticated** with access to `<tracker>` —
    `gh api repos/<tracker> --jq .name` must return
    `<tracker>`. A 401/403/404 means the user needs

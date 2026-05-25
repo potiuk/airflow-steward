@@ -9,7 +9,9 @@
   - [Tools enabled](#tools-enabled)
   - [CVE tooling](#cve-tooling)
   - [GitHub project board](#github-project-board)
-  - [Gmail and PonyMail](#gmail-and-ponymail)
+  - [Mail sources](#mail-sources)
+    - [Backend declaration](#backend-declaration)
+    - [Per-backend config](#per-backend-config)
   - [Issue-template fields](#issue-template-fields)
   - [Pointers to sibling files](#pointers-to-sibling-files)
 
@@ -85,7 +87,7 @@ publicly archived lists may appear in CVE `references[]` as
 | Capability | Tool | Adapter directory | Config knobs declared here |
 |---|---|---|---|
 | Issue tracking + source control + project board | `github` | [`../../tools/github/`](../../tools/github/) | `tracker_repo`, `upstream_repo`, `github_project_board_*`, `issue_template_fields` |
-| Inbound email / drafts | `gmail` | [`../../tools/gmail/`](../../tools/gmail/) | `security_list` subscription; PonyMail archive URL templates below |
+| Inbound email / drafts | `<one or more mail-source backends>` | [`../../tools/mail-source/contract.md`](../../tools/mail-source/contract.md) (abstract) + per-backend adapter dirs (`tools/gmail/`, `tools/ponymail/`, `tools/mail-source/imap/`, `tools/mail-source/mbox/`, ...) | See [Mail sources](#mail-sources) below — declare each backend's role (primary / preferred-for-`<op>` / fallback / optional) and `mandatory` flag |
 | CVE allocation + record mgmt | `vulnogram` | [`../../tools/vulnogram/`](../../tools/vulnogram/) | see [CVE tooling](#cve-tooling) below |
 | Release voting / announce | TODO: ASF mailing lists — or replace with the project's release-comms backend | — | via `dev_list` / `announce_list` / `users_list` |
 
@@ -142,20 +144,56 @@ returns `not found`):
 | `Fix released` | TODO |
 | `Announced` | TODO |
 
-## Gmail and PonyMail
+## Mail sources
 
-Gmail-side mechanics (MCP call shapes, threading rule, search-query
-patterns, archive URL construction) live under
-[`../../tools/gmail/`](../../tools/gmail/); the concrete per-project
-values below are what the generic recipes substitute in.
+The skills treat every supported mail backend the same way —
+through the abstract operations defined in
+[`../../tools/mail-source/contract.md`](../../tools/mail-source/contract.md).
+The adopter declares which backends are configured, what *role*
+each plays, and whether any are *mandatory*. The skill's resolution
+rule (see the contract) then picks the right backend per operation
+at run time.
 
-| Key | Value |
-|---|---|
-| `security_list_domain` | TODO: e.g. `security.foo.apache.org` — Gmail `list:` operator uses the domain form |
-| `ponymail_private_search_url_template` | TODO |
-| `ponymail_public_search_url_template` | TODO |
-| `ponymail_api_url_template` | TODO |
-| `ponymail_thread_url_template` | `https://lists.apache.org/thread/<hash>?<list>` |
+### Backend declaration
+
+One row per configured backend. **Exactly one** row carries
+`role: primary`. Multiple rows may carry `preferred for <op>` to
+override the primary for specific operations. `fallback` rows are
+tried in order when no preferred / primary backend supports the op.
+`mandatory: yes` means the skill **refuses to run** when that
+backend is unavailable; `no` means the skill continues with the
+remaining backends (and skips ops that no available backend supports).
+
+| Backend | Role | Mandatory | Notes |
+|---|---|---|---|
+| TODO: `gmail` | TODO: e.g. `primary` | TODO: `yes` / `no` | TODO: e.g. "Triager Gmail account subscribed to `<security-list>` and `<private-list>`" |
+| TODO: `ponymail` | TODO: e.g. `fallback` or `preferred for thread_url` | TODO | TODO: e.g. "Read-only archive backstop; PMC LDAP session required for private-list reads" |
+| TODO: *(add more rows as needed — `imap`, `mbox`, project-specific adapter)* | | | |
+
+Reference adapter docs:
+[`tools/gmail/tool.md`](../../tools/gmail/tool.md) (full read+write),
+[`tools/ponymail/tool.md`](../../tools/ponymail/tool.md) (read-only ASF archive),
+[`tools/mail-source/imap/README.md`](../../tools/mail-source/imap/README.md) (stub),
+[`tools/mail-source/mbox/README.md`](../../tools/mail-source/mbox/README.md) (read-only offline archive — stub).
+
+### Per-backend config
+
+Per-backend values the generic recipes substitute in. Only fill in
+the rows for backends declared above; leave the rest blank or
+remove the row.
+
+| Key | Backend | Value |
+|---|---|---|
+| `security_list_domain` | `gmail` | TODO: e.g. `security.foo.apache.org` — Gmail `list:` operator uses the domain form |
+| `ponymail_private_search_url_template` | `ponymail` | TODO |
+| `ponymail_public_search_url_template` | `ponymail` | TODO |
+| `ponymail_api_url_template` | `ponymail` | TODO |
+| `ponymail_thread_url_template` | `ponymail` | `https://lists.apache.org/thread/<hash>?<list>` |
+| `imap_host` | `imap` | TODO: e.g. `imap.example.org` |
+| `imap_account` | `imap` | TODO: e.g. `security-triage@example.org` |
+| `imap_security_list_folder` | `imap` | TODO: e.g. `INBOX.security-list` |
+| `imap_drafts_folder` | `imap` | TODO: e.g. `Drafts` (or leave blank to declare `create_draft` unsupported on this adapter) |
+| `mbox_archive_path` | `mbox` | TODO: e.g. `/srv/audit/security-list-2024.mbox` |
 
 ## Issue-template fields
 
