@@ -100,6 +100,19 @@ Reusable wording for the common cases lives in
 [`<project-config>/canned-responses.md`](<project-config>/canned-responses.md) — consult it before drafting a
 reply from scratch.
 
+**When there's no direct reporter contact** (ASF-relay reports,
+read-only GHSA, anonymous tips), the team communicates with the
+*forwarder* instead — the security-team member or relay service
+that delivered the report. In that **via-forwarder mode**, only
+the five lifecycle milestones (report accepted as valid, report
+invalidated, CVE allocated, advisory sent, additional information
+requested) are relayed. Regular workflow status (label flips,
+PR-opened, PR-merged) and credit-confirmation questions are
+**not** sent to the forwarder — they would burn the forwarder's
+goodwill with low-signal updates. See
+[`forwarder-routing-policy.md`](forwarder-routing-policy.md) for
+detection rules, the full milestone list, and the negative space.
+
 ### Recording status transitions on the tracker
 
 **Every status transition must also be recorded as a comment on the GitHub

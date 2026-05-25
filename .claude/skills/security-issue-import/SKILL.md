@@ -1067,7 +1067,7 @@ here.
 | **Affected versions** | Extract `Airflow <version>` / `>= X, < Y` / `<Y` phrases from the body. If the reporter gave only a single version they tested on (e.g. `3.1.5`), record that verbatim; the triager can widen the range later. Leave `_No response_` if no version is mentioned. |
 | **Security mailing list thread** | **Keep the private thread handle, and — if possible — also link the PonyMail archive entry.** The full URL-construction recipe (search URL template, month-token format, user-pastes-back flow, Gmail-threadId fallback) lives in [`tools/gmail/ponymail-archive.md`](../../../tools/gmail/ponymail-archive.md#use-case--security-issue-import); the adopting project's private-search URL template is declared in [`<project-config>/project.md`](../../../<project-config>/project.md#gmail-and-ponymail). Propose the constructed search URL to the user at Step 5, wait for them to paste back the resolved `lists.apache.org/thread/<hash>?<security-list>` URL, and record both the PonyMail URL and the Gmail `threadId` in this field. The URL is **internal-only** — the `generate-cve-json` script will not export it to `references[]` — see the "CVE references must never point at non-public mailing-list threads" section of [`AGENTS.md`](../../../AGENTS.md). |
 | **Public advisory URL** | `_No response_`. Populated at Step 14 by `security-issue-sync` once the advisory is archived. |
-| **Reporter credited as** | The reporter's full display name from the email `From:` header (e.g. `Alice Example` from `"Alice Example" <alice@example.com>`). This is a **placeholder** — the receipt-of-confirmation reply in Step 7 asks the reporter to confirm their preferred credit form. **Apply the [bot/AI credit policy](../../../tools/vulnogram/bot-credits-policy.md) before populating** — if the `From:`-header name or address matches the bot detection rule (`*[bot]` suffix, known-bot list, `*-bot`/`*-ai`/`*-agent`/`*-gpt` suffix patterns, `noreply`/`no-reply`/`donotreply` / `security-alerts@` / `notifications@` service sender), set the field to `_No response_` and surface the skip in Step 5's proposal with the matched rule. **Additionally fold the policy's *clarification-reply* into the Step 7 receipt-of-confirmation draft**, asking whether the bot/AI handle is the intended credit or whether there's a human behind it to credit instead. Same rule applies to the ASF-relay `Credit:`-line extraction (the bot detection runs on the relayed credit string, not on the `security@apache.org` sender). The user can override per the policy doc. |
+| **Reporter credited as** | The reporter's full display name from the email `From:` header (e.g. `Alice Example` from `"Alice Example" <alice@example.com>`). This is a **placeholder** — in direct-reporter mode, the receipt-of-confirmation reply in Step 7 asks the reporter to confirm their preferred credit form. **Apply the [bot/AI credit policy](../../../tools/vulnogram/bot-credits-policy.md) before populating** — if the `From:`-header name or address matches the bot detection rule (`*[bot]` suffix, known-bot list, `*-bot`/`*-ai`/`*-agent`/`*-gpt` suffix patterns, `noreply`/`no-reply`/`donotreply` / `security-alerts@` / `notifications@` service sender), set the field to `_No response_` and surface the skip in Step 5's proposal with the matched rule. **In direct-reporter mode**, also fold the policy's *clarification-reply* into the Step 7 receipt-of-confirmation draft, asking whether the bot/AI handle is the intended credit or whether there's a human behind it to credit instead. **In via-forwarder mode** (class `ASF-security relay` and the other cases enumerated in [`docs/security/forwarder-routing-policy.md`](../../../docs/security/forwarder-routing-policy.md#when-does-via-forwarder-mode-apply)), the **standalone** bot-credit clarification draft is suppressed — it is a credit-acceptance confirmation message, which the forwarder cannot meaningfully answer. The credit *question* itself is **not** suppressed: it folds as a single best-effort *"if the reporter has a preferred credit form, please pass it back"* line into the Step 7 receipt-of-confirmation draft instead, per the [question-vs-confirmation distinction](../../../docs/security/forwarder-routing-policy.md#negative-space--do-not-relay) in the forwarder-routing policy. The field stays at `_No response_` until a meaningful answer comes back. Same bot-detection rule applies to the ASF-relay `Credit:`-line extraction (the detection runs on the relayed credit string, not on the `security@apache.org` sender). The user can override per the policy doc. |
 | **PR with the fix** | `_No response_`. |
 | **Remediation developer** | `_No response_`. Auto-populated by the `security-issue-sync` skill from the linked PR's author the first time *PR with the fix* is set; manual edits are preserved on subsequent syncs. The auto-populate step applies the same [bot/AI credit policy](../../../tools/vulnogram/bot-credits-policy.md). |
 | **CWE** | `_No response_`. The security team scores CWE independently; a reporter-supplied CWE is informational only (per the *"Reporter-supplied CVSS scores are informational only"* rule in [`AGENTS.md`](../../../AGENTS.md)). Do **not** copy a CWE from the reporter's body into this field. |
@@ -1595,31 +1595,43 @@ For each confirmed `Report` / `ASF-security relay`:
    - **Class `ASF-security relay`** (the external reporter is
      unreachable to us directly; only the ASF forwarder can relay
      questions back to them through the original external channel —
-     GHSA, HackerOne, direct mail) — `toRecipients` is the
-     **personal `@apache.org` address of the ASF forwarder** (the
-     `From:` of the inbound relay message), not `security@apache.org`
-     and not the unreachable external reporter. Body is **short**
-     per the "Brevity: emails state facts, not context" rule in
+     GHSA, HackerOne, direct mail). This is the canonical
+     **via-forwarder mode** per
+     [`docs/security/forwarder-routing-policy.md`](../../../docs/security/forwarder-routing-policy.md);
+     the receipt-of-confirmation draft here is the first
+     forwarder-bound message in the lifecycle, and the rest of
+     the milestone drafts (CVE allocated, advisory sent,
+     invalidation, additional-information requests) follow the
+     same routing. `toRecipients` is the **personal
+     `@apache.org` address of the ASF forwarder** (the `From:` of
+     the inbound relay message), not `security@apache.org` and
+     not the unreachable external reporter. Body is **short** per
+     the "Brevity: emails state facts, not context" rule in
      [`AGENTS.md`](../../../AGENTS.md):
 
      - one sentence acknowledging receipt, linking to the external
        reference (GHSA ID, HackerOne report URL);
-     - one sentence asking the forwarder to relay the
-       credit-preference question below through the original
-       channel;
-     - the credit-preference question itself (two or three lines,
-       adapted from the canned response — *"We will credit you in
-       the CVE record as <reporter-credited-as placeholder>. If
-       you would prefer a different credit line — full name,
-       handle, affiliation, or "anonymous" — please let us know
-       before the advisory goes out."*).
+     - one sentence asking the forwarder, **best-effort**, to
+       pass any preferred credit form back if the reporter has
+       one — folded in as a single line per the
+       forwarder-routing policy's
+       [question-vs-confirmation distinction](../../../docs/security/forwarder-routing-policy.md#negative-space--do-not-relay)
+       (initial credit *question* is allowed in milestone-class
+       drafts; what is suppressed is *follow-up
+       credit-acceptance confirmation* messages on subsequent
+       sync passes).
 
      Do **not** restate the vulnerability, the severity, or the
      Airflow handling process — the ASF security team already
-     knows all of that. See the
+     knows all of that. **Do not** include any of the negative-
+     space items from the forwarder-routing policy (regular
+     workflow status, standalone credit-acceptance confirmation
+     drafts, reviewer-comment relays). See
+     [`docs/security/forwarder-routing-policy.md`](../../../docs/security/forwarder-routing-policy.md)
+     for the full milestone list + negative space and the
      "ASF-security-relay reports: a special case for drafting"
-     section in [`AGENTS.md`](../../../AGENTS.md) for the full
-     rationale.
+     section in [`AGENTS.md`](../../../AGENTS.md) for the
+     drafting-mechanics rationale.
 
    **Never send.** Always create a draft; the triager reviews in
    Gmail before sending.

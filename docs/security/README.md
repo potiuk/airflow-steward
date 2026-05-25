@@ -74,6 +74,13 @@ and reuse the skills verbatim.
   threat model for the security skill family: trust boundaries,
   adversary personas, STRIDE matrix per skill, mitigation cross-
   reference, residual risk, and the re-audit cadence.
+- [**`forwarder-routing-policy.md`**](forwarder-routing-policy.md) —
+  when a tracker has no direct reporter contact (ASF-relay,
+  read-only GHSA, anonymous tip), the skills route reporter-facing
+  communication through the forwarder. The policy defines when
+  that mode applies, the milestone list (events that **do** get
+  relayed), and the negative list (events that don't — including
+  credit-confirmation questions and regular workflow status).
 
 ## Adopter contract
 

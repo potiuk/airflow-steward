@@ -120,13 +120,16 @@ extraction time:
    override to other trackers — overrides are per-tracker.
 
 4. **Draft a clarification reply to the reporter when an email
-   thread exists.** When the candidate would have been credited as
-   the *finder* (i.e. the reporter themselves is the bot-looking
-   name) **and** the tracker has an inbound `<security-list>` mail
-   thread to reply on, propose a **Gmail draft** (not a sent
-   message) on the same thread asking whether the bot/AI handle is
-   the intended credit or whether there's a human behind it who
-   should be credited instead. The draft should be:
+   thread exists *and* the tracker is in direct-reporter mode.**
+   When the candidate would have been credited as the *finder*
+   (i.e. the reporter themselves is the bot-looking name), the
+   tracker has an inbound `<security-list>` mail thread to reply
+   on, **and** the tracker's routing mode (per
+   [`docs/security/forwarder-routing-policy.md`](../../docs/security/forwarder-routing-policy.md))
+   is *direct-reporter*, propose a **Gmail draft** (not a sent
+   message) on the same thread asking whether the bot/AI handle
+   is the intended credit or whether there's a human behind it
+   who should be credited instead. The draft should be:
 
    * **Polite and short** — one or two short paragraphs; no
      accusations, no jargon.
@@ -139,9 +142,32 @@ extraction time:
    * **Sent only after explicit user confirmation** per the
      [framework's never-send-without-asking rule](../../AGENTS.md).
 
-   When the tracker has no inbound mail thread (e.g. a
-   `security-issue-import-from-pr` tracker), skip the draft step —
-   there is no reporter to ask.
+   **In via-forwarder mode the standalone clarification draft
+   is suppressed.** It is a *credit-acceptance confirmation*
+   message (asking the reporter to confirm the AI/bot handle is
+   the intended credit, or to accept a different one) — and
+   credit-acceptance confirmations are on the
+   [forwarder-routing-policy negative list](../../docs/security/forwarder-routing-policy.md#negative-space--do-not-relay).
+   The forwarder cannot meaningfully accept a credit on behalf
+   of the original reporter, so the message becomes a chase-up
+   loop. The bot-credit detection still runs and still keeps
+   the bot/AI handle out of the credit field; what is suppressed
+   is the dedicated message to confirm the alternative.
+
+   The credit *question* itself (initial ask, *"if the reporter
+   has a preferred credit form, please pass it back"*) is **not**
+   suppressed — it is folded as a single line into whatever
+   milestone draft the via-forwarder lifecycle next produces (the
+   Step 7 receipt-of-confirmation, the *Report accepted as
+   valid* milestone, the *CVE allocated* notification). The
+   credit field stays at `_No response_` (or whatever the
+   original report's `Credit:` line yielded after bot filtering)
+   until a meaningful answer comes back.
+
+   When the tracker has no inbound mail thread at all (e.g. a
+   `security-issue-import-from-pr` tracker — the
+   forwarder-routing policy explicitly does **not** apply
+   there), skip the draft step — there is no reporter to ask.
 
    A reusable template for the draft body lives in
    [`<project-config>/canned-responses.md`](../../<project-config>/canned-responses.md);

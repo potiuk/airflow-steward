@@ -481,19 +481,31 @@ informational, not a blocker).
 Skip this entire substep when the import path detected in Step 2
 is *PR-imported*.
 
-For `security@`-imported trackers:
+For `security@`-imported trackers, the invalidation reply is one
+of the five [forwarder-routing-policy milestones](../../../docs/security/forwarder-routing-policy.md#milestones--do-relay)
+(*Report assessed as invalid*) — so the draft fires in both
+direct-reporter and via-forwarder modes; the policy only changes
+the **recipient** and the **body shape**.
 
 1. **Recipients:**
-   - `toRecipients`: `tracker.reporterEmail` (the `From:` of
-     the inbound root message). If the import was via the
-     ASF-security relay path (the `From:` is a `@apache.org`
-     forwarder, not the external reporter), reply to the
-     forwarder per the *ASF-security relay* convention in
-     [`security-issue-import` Step 7](../security-issue-import/SKILL.md).
+   - **Direct-reporter mode**: `toRecipients` is
+     `tracker.reporterEmail` (the `From:` of the inbound root
+     message). The reply lands on the inbound thread via thread
+     attachment.
+   - **Via-forwarder mode** (ASF-security relay or any other case
+     in the [policy's detection list](../../../docs/security/forwarder-routing-policy.md#when-does-via-forwarder-mode-apply)):
+     `toRecipients` is the **forwarder contact** (the
+     `@apache.org` forwarder address from the inbound `From:` for
+     ASF-relay, or the named contact from the explicit
+     no-direct-contact marker comment). The body follows the
+     *Report assessed as invalid* milestone-body shape in the
+     policy doc — short, references the external identifier (GHSA
+     ID, HackerOne URL) rather than restating the technical
+     detail.
    - `ccRecipients`: always includes `<security-list>`
      (`<security-list>` for the adopting project) —
      value comes from
-     [`<project-config>/project.md`](../../../<project-config>/project.md#gmail-and-ponymail).
+     [`<project-config>/project.md`](../../../<project-config>/project.md#mail-sources).
 2. **Subject:** `Re: <root subject>`. Never invent a fresh
    subject — the reply lands on the inbound thread via
    thread attachment (`replyToMessageId` for `claude_ai_mcp`,
