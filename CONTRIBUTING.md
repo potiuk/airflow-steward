@@ -3,6 +3,7 @@
 **Table of Contents**  *generated with [DocToc](https://github.com/thlorenz/doctoc)*
 
 - [Contributing](#contributing)
+  - [English as code](#english-as-code)
   - [What this framework is](#what-this-framework-is)
   - [Repository layout](#repository-layout)
     - [Directory tree](#directory-tree)
@@ -14,7 +15,7 @@
   - [Code in this repo](#code-in-this-repo)
     - [Python (uv-managed)](#python-uv-managed)
     - [Groovy](#groovy)
-    - [Shell + documentation-as-code](#shell--documentation-as-code)
+    - [Shell scripts](#shell-scripts)
   - [Getting set up](#getting-set-up)
     - [Lightening the agent context](#lightening-the-agent-context)
   - [Making changes](#making-changes)
@@ -45,6 +46,80 @@ out the layering the repository depends on, the cross-cutting
 concerns every change must respect, and the dev loop CI enforces.
 A patch that ignores any of these is hard to land no matter how
 correct it is in isolation.
+
+## English as code
+
+The most important thing to understand about this repository,
+before you make any change, is that **English is the primary
+programming language here**. Not as metaphor — as engineering.
+
+Sixty-some years ago, COBOL was designed around an ambitious idea:
+let programmers write business logic in something close to plain
+English (`MULTIPLY HOURS-WORKED BY HOURLY-RATE GIVING GROSS-PAY`),
+on the theory that the compiler should meet humans halfway. The
+idea was sound; the implementation wasn't. Compilers of the 1960s
+could parse the syntax but not the meaning, so COBOL ended up
+verbose, brittle, and still requiring programmer discipline to
+write code the compiler could actually run. The full-English
+vision was abandoned, and for the next half-century, programming
+languages drifted in the *opposite* direction — more terse, more
+rigorous, more demanding of the human, on the assumption that the
+human would always be the one meeting the machine halfway.
+
+**We have come full circle.** Today's interpreters can read
+English. A modern coding agent — Claude Code, Codex, Gemini CLI,
+any of the runtimes listed in
+[Agent harnesses](#agent-harnesses) — reads a plain-English
+description of a workflow (*"sweep the inbox since last week,
+classify each message against the six triage classes, draft a
+confirmation reply for each one that needs one"*) and executes
+it. The compiler is now sophisticated enough that the
+English-as-code vision actually works. COBOL was right about
+where things should go; it was sixty years early on the question
+of what would interpret it.
+
+This repository is built on that observation. The skill files
+under `.claude/skills/<name>/SKILL.md` are **programs**. They are
+written in English. They are executed by an agent. They have
+inputs, outputs, control flow, error handling, edge cases, and
+unit tests (the eval suite under [`tools/skill-evals/`](tools/skill-evals/)).
+A `SKILL.md` is no less code than a `.py` file — it is code at a
+**higher abstraction level**, interpreted by a more capable
+interpreter.
+
+Traditional programming languages (Python and Groovy in this
+repo) still have their place. They handle the deterministic
+pieces where bit-exact output matters more than judgement — CVE
+JSON emission, OAuth dance, archive parsing, dashboard rendering.
+Those live under [`tools/`](tools/) as ordinary code with
+ordinary tests. But they are the *minority* of the surface area.
+The bulk of what this project does — assess a security report,
+classify a PR, mentor a contributor, allocate a CVE — is encoded
+in English-language skill files. That is the project's bet, and
+it is the bet you need to internalise before contributing.
+
+Three practical consequences:
+
+- **A change to a skill file is a code change.** Treat it like
+  one. Run the eval suite. Think about boundary conditions. Add
+  the equivalent of a regression test (an eval fixture) for the
+  bug you fixed. The fact that the file ends in `.md` does not
+  make it a doc — it makes it a program with a markdown syntax.
+- **A change to a tool's `tool.md` is a code change.** Tool
+  contracts in markdown are read by the skills at runtime;
+  rewording the contract is rewording the API.
+- **You author both layers agentically** — see
+  [Authoring with an agent](#authoring-with-an-agent) below. The
+  loop is the same whether the artefact is an English skill file
+  or a Python bridge, because the meta-level operation (state
+  intent, iterate, probe edges, test) is the same. Only the
+  feedback signal differs — eval suite for the English layer,
+  `pytest` / `mypy` / `ruff` for the traditional-language layer.
+
+Read the rest of this guide with that frame in mind. When
+something looks like "just documentation", check whether it
+sits under `.claude/skills/` or `tools/<system>/tool.md`. If it
+does, it's code — and the rules for changing code apply.
 
 ## What this framework is
 
@@ -317,9 +392,15 @@ harness.
 
 ## Code in this repo
 
-The framework is primarily documentation-as-code (skills are
-markdown), but several deterministic operations are implemented as
-executables.
+The framework's primary programming language is English — skill
+files under `.claude/skills/` and tool contracts under `tools/`
+are programs executed by the agent (see
+[English as code](#english-as-code)). Several deterministic
+operations are also implemented in traditional programming
+languages where bit-exact output matters more than judgement.
+This section covers the traditional-language code; the English
+layer is covered under [Skill families](#skill-families) and
+[Tool families](#tool-families) above.
 
 ### Python (uv-managed)
 
@@ -398,16 +479,17 @@ the Python port of the JIRA bridge alongside the write path).
 **Languages other than Groovy or Python are welcome via PR** — the
 contract that matters is the CLI surface and the JSON output shape.
 
-### Shell + documentation-as-code
+### Shell scripts
 
-- [`tools/agent-isolation/`](tools/agent-isolation/) is a handful
-  of shell scripts (`claude-iso.sh`, sandbox status-line helpers,
-  the placeholder pre-commit script). They run on POSIX bash.
+- [`tools/agent-isolation/`](tools/agent-isolation/) holds the
+  shell scripts (`claude-iso.sh`, sandbox status-line helpers,
+  the placeholder pre-commit script) that wire the agent into
+  the bubblewrap sandbox. POSIX bash.
 - [`tools/dev/`](tools/dev/) holds the local pre-commit checkers
   invoked from `.pre-commit-config.yaml`.
-- Skills (`*/SKILL.md`) are documentation that the agent executes
-  as a procedure. Editing a skill is editing prose; the eval
-  suite under `tools/skill-evals/` is what catches regressions.
+
+Shell scripts are deterministic — no agent in the execution path
+— so they are tested by running them and observing the output.
 
 ## Getting set up
 
@@ -537,12 +619,15 @@ programming, and worth describing explicitly — getting the rhythm
 right is the difference between a smooth contribution and a
 frustrating one.
 
-**The framework is documentation-as-code.** Skills are markdown.
-Tool contracts are markdown. RFCs are markdown. Even the Python /
-Groovy bridges are best authored by describing intent to the agent
-and reviewing the diff, not by typing each line by hand. The
-artefact you ship is text; the *method* by which the text gets
-produced is a conversation.
+**The framework is code at two abstraction levels.** The bulk —
+skills, tool contracts, RFCs — is English, executed by an agent
+(see [English as code](#english-as-code)). The minority — Python
+and Groovy bridges under [`tools/`](tools/) — is traditional-
+programming-language code, executed by `python` / `groovy`. Both
+layers are best authored by describing intent to the agent and
+reviewing the diff, not by typing each line by hand. The artefact
+you ship is text; the *method* by which the text gets produced is
+a conversation.
 
 **Lead with intent, not with code.** When you sit down to make a
 change, open with **what** you want and **why** — not a code
@@ -619,12 +704,16 @@ the agent says *"this contradicts the rule in AGENTS.md line 47"*
 or *"the eval case under `step-3-classify/` will fail with this
 change"*, listen — that's the agent earning its seat.
 
-**Where traditional programming still applies.** The Python and
-Groovy bridges under `tools/` are real code with real tests. The
-loop is the same — intent-first, iterate, probe edges — but the
-feedback signal is stronger because `pytest` / `mypy` / `ruff`
-catch concrete bugs the eval-suite approach can't. When working
-on a Python bridge:
+**Where traditional programming languages enter the picture.** The
+Python and Groovy bridges under `tools/` are written in lower-level
+languages with stronger machine-checked feedback than the English
+layer gets. Both layers are code (see
+[English as code](#english-as-code)); they differ in what *catches*
+your mistakes — `pytest` / `mypy` / `ruff` catch syntactic and type
+bugs deterministically; the eval suite catches semantic regressions
+in skill behaviour. The loop is the same — intent-first, iterate,
+probe edges — but for the Python / Groovy pieces the inner-loop
+feedback is faster. When working on a Python bridge:
 
 - Run `uv run pytest` *between every revision*, not just at the
   end. A failing test halfway through is information; a stack of
