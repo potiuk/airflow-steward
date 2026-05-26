@@ -37,6 +37,8 @@
     - [Layout](#layout)
     - [Setting up a fresh host](#setting-up-a-fresh-host)
     - [A minimal `sync.sh`](#a-minimal-syncsh)
+    - [Extending `sync.sh`: share project memory across machines](#extending-syncsh-share-project-memory-across-machines)
+    - [Extending `sync.sh`: expose tracked scripts on `$PATH`](#extending-syncsh-expose-tracked-scripts-on-path)
     - [Why a *private* repo](#why-a-private-repo)
   - [Adopter setup](#adopter-setup)
     - [Direct manual install](#direct-manual-install)
@@ -1176,7 +1178,7 @@ paths). Track the artifacts you want shared, symlink them into
 |---|---|
 | `CLAUDE.md` (personal collaboration prefs) | `~/.claude/.credentials.json` — ⚠ secret, never commit |
 | `scripts/sandbox-bypass-warn.sh`, `scripts/sandbox-error-hint.sh`, `scripts/sandbox-status-line.sh`, and any other hooks | `~/.claude/sessions/`, `~/.claude/history.jsonl` — session state |
-| `agent-isolation/claude-iso.sh` (if you globally installed it per the wrapper section) | `~/.claude/projects/` — per-project memory and tasks |
+| `agent-isolation/claude-iso.sh` (if you globally installed it per the wrapper section) | `~/.claude/projects/<key>/` — per-project session state and tasks (the `memory/` subdir is optionally sharable, see [Extending `sync.sh`: share project memory across machines](#extending-syncsh-share-project-memory-across-machines)) |
 | Custom slash commands (`commands/<name>.md`) | `~/.claude/settings.json` — typically differs per host (plugins, statusLine paths, voice) |
 | MCP servers you've audited and want everywhere (`.mcp.json` shape, by hand) | `~/.claude/settings.local.json` — by design machine-specific |
 
@@ -1260,6 +1262,143 @@ git diff --cached --quiet || \
     git commit -m "auto-sync from $(hostname) at $(date -Iseconds)"
 git log @{u}.. --oneline | grep -q . && git push
 ```
+
+### Extending `sync.sh`: share project memory across machines
+
+Claude Code persists durable per-project memory under
+`~/.claude/projects/<key>/memory/`, where `<key>` is the project's
+absolute working directory with `/` and `.` replaced by `-`. The same
+project takes a different key on each host
+(`-home-you-code-foo` on Linux vs `-Users-you-code-foo` on macOS), so
+a naive copy-the-tree-into-the-repo sync either misses the cross-host
+mapping or stomps over it.
+
+The pattern that works: store memories in the repo under a
+`$HOME`-relative subdir, and have `sync.sh` re-establish a per-host
+symlink after every pull. The function below is idempotent — it
+ingests any non-symlink memory dir found on the host that is not yet
+in the repo, then re-points the runtime symlinks at the repo paths.
+New project on a new host? Open it once; the next sync pass picks up
+the memory dir, ingests it, and the symlink appears on every other
+host on their next pull.
+
+```bash
+MEM_REPO="$HOME/.claude-config/memory"
+PROJECTS="$HOME/.claude/projects"
+
+# Encode an absolute path the way Claude Code keys project dirs: every
+# / and . becomes -. So /home/you/.claude-config -> -home-you--claude-config.
+encode_path() {
+  local p="$1"
+  p="${p//\//-}"
+  p="${p//./-}"
+  printf '%s' "$p"
+}
+
+ensure_memory_links() {
+  mkdir -p "$MEM_REPO"
+  local home_key
+  home_key="$(encode_path "$HOME")"
+
+  # Step 1 — ingest any non-symlink memory dir not yet in the repo.
+  for project_dir in "$PROJECTS"/*/; do
+    runtime_mem="${project_dir}memory"
+    [[ -d "$runtime_mem" && ! -L "$runtime_mem" ]] || continue
+    [[ -n "$(ls -A "$runtime_mem" 2>/dev/null)" ]] || continue
+
+    key="$(basename "${project_dir%/}")"
+    if [[ "$key" == "$home_key" ]]; then
+      norm="_root_"
+    elif [[ "$key" == "$home_key-"* ]]; then
+      norm="${key#$home_key-}"
+    else
+      # Project lives outside $HOME — preserve full key under ABS-.
+      norm="ABS$key"
+    fi
+
+    repo_mem="$MEM_REPO/$norm"
+    [[ -e "$repo_mem" ]] && continue
+    mv "$runtime_mem" "$repo_mem"
+  done
+
+  # Step 2 — re-establish per-host symlinks for every tracked memory dir.
+  for repo_mem in "$MEM_REPO"/*/; do
+    [[ -d "$repo_mem" ]] || continue
+    norm="$(basename "${repo_mem%/}")"
+    if [[ "$norm" == "_root_" ]]; then
+      key="$home_key"
+    elif [[ "$norm" == ABS-* ]]; then
+      key="${norm#ABS}"
+    else
+      key="$home_key-$norm"
+    fi
+    target="$PROJECTS/$key/memory"
+    mkdir -p "$(dirname "$target")"
+    if [[ -L "$target" ]]; then
+      [[ "$(readlink "$target")" == "${repo_mem%/}" ]] && continue
+      rm "$target"
+    elif [[ -d "$target" ]]; then
+      continue   # real dir not yet ingested — leave alone
+    fi
+    ln -s "${repo_mem%/}" "$target"
+  done
+}
+```
+
+Call `ensure_memory_links` from `sync.sh` *after* `git pull` (untracked
+files are not autostashed, so ingesting before pull risks colliding with
+a remote add of the same path).
+
+### Extending `sync.sh`: expose tracked scripts on `$PATH`
+
+A second helper, dropped into the same `sync.sh`, symlinks every
+tracked executable into `~/.local/bin/` so the scripts are invocable
+by name from any shell. Platform-suffixed binaries (`foo-linux`,
+`foo-macos`) link as the bare `foo` on the matching host only — so the
+same repo can carry both builds and each host picks up the right one.
+
+```bash
+LOCAL_BIN="$HOME/.local/bin"
+REPO="$HOME/.claude-config"
+
+ensure_bin_links() {
+  mkdir -p "$LOCAL_BIN"
+  local platform=""
+  case "$(uname -s)" in
+    Linux) platform=linux ;;
+    Darwin) platform=macos ;;
+  esac
+
+  link_one() {
+    local src="$1" name="$2" dst="$LOCAL_BIN/$2"
+    if [[ -L "$dst" ]]; then
+      [[ "$(readlink "$dst")" == "$src" ]] && return
+      rm "$dst"
+    elif [[ -e "$dst" ]]; then
+      return   # something non-symlink is in the way — leave alone
+    fi
+    ln -s "$src" "$dst"
+  }
+
+  for f in "$REPO"/bin/* "$REPO"/scripts/*.sh; do
+    [[ -f "$f" && -x "$f" ]] || continue
+    name="$(basename "$f")"
+    case "$name" in
+      *-linux) [[ "$platform" == "linux" ]] && link_one "$f" "${name%-linux}" ;;
+      *-macos) [[ "$platform" == "macos" ]] && link_one "$f" "${name%-macos}" ;;
+      *)       link_one "$f" "$name" ;;
+    esac
+  done
+}
+```
+
+With this in place, no one-shot symlink step is needed when wiring a
+fresh host for scripts in `bin/` or `scripts/` — the next sync pass
+takes care of it. The hooks referenced by absolute path from
+`settings.json` (e.g. `~/.claude/scripts/sandbox-bypass-warn.sh`) still
+need their one-time symlink as in
+[Setting up a fresh host](#setting-up-a-fresh-host) — these run from
+the harness, not the user shell.
 
 ### Why a *private* repo
 
