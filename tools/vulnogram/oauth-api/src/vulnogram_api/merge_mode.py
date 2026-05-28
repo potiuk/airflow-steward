@@ -155,6 +155,12 @@ def _diff_affected_products(
     new_sigs = {_product_signature(entry) for entry in new if isinstance(entry, dict)}
     if current_sigs == new_sigs:
         return []
+    # First-time population (e.g. a freshly-allocated RESERVED record with an
+    # empty ``affected[]``) is not a product *change* — there is no prior
+    # signature to be renamed away from. Treat it as a non-diff so the guard
+    # does not force --allow-product-change for the normal first push.
+    if not current_sigs:
+        return []
     diffs: list[str] = []
     for sig in sorted(current_sigs - new_sigs):
         package, product = sig

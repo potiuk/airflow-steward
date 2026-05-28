@@ -270,6 +270,25 @@ class TestProductChangeGuard:
         )
         assert diffs == []
 
+    def test_diff_empty_when_current_is_first_time_populated(self):
+        # A freshly-allocated RESERVED record carries an empty ``affected[]``;
+        # the first push that populates it must not be treated as a product
+        # *change* (there is no prior signature to be renamed away from).
+        diffs = _diff_affected_products(
+            current=[],
+            new=[{"packageName": "apache-foo", "product": "Apache Foo"}],
+        )
+        assert diffs == []
+
+    def test_first_time_population_does_not_require_allow_product_change(self):
+        # End-to-end: pushing a populated ``affected[]`` onto a record that
+        # had none before must succeed without ``--allow-product-change``.
+        merged = apply_merge_mode_guards(
+            _current(affected=[]),
+            _new(affected=[{"packageName": "apache-foo", "product": "Apache Foo"}]),
+        )
+        assert merged["containers"]["cna"]["affected"][0]["packageName"] == "apache-foo"
+
 
 # ---------------------------------------------------------------------------
 # Composition + edge cases
