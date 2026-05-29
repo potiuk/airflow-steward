@@ -244,17 +244,90 @@ concurrently, which is exactly what the sync needs.
    - Return a **compact structured report** — not a freeform
      narrative. The exact shape is below.
 
-3. **Aggregate and present one combined proposal.** Once all
-   subagents return, fold their reports into one table / numbered
-   proposal covering every issue, grouped so the user can confirm
-   with `all`, `NN:all`, `NN:1,3`, or per-issue subsets (see the
-   existing apply-loop conventions). Only after the user confirms
-   does the orchestrator apply changes.
+3. **Bucket trackers by CVE-record impact.** A tracker's proposed
+   changes fall into one of two buckets:
 
-4. **Apply sequentially, not in parallel.** Even though assessment
-   ran in parallel, the apply phase must be sequential so
-   `gh`-rate-limit surprises, partial failures, and user interrupts
-   stay legible. Do not spawn subagents for the apply phase.
+   - **CVE-affecting** — any proposal that changes a body field
+     whose value lands in the regenerated CVE JSON pushed to
+     Vulnogram. Concretely: *Title* (issue title; ships into
+     `containers.cna.title`), *Short public summary for publish*,
+     *CWE*, *Severity*, *Affected versions*, *Reporter credited
+     as*, *Remediation developer*, *PR with the fix*, *Public
+     advisory URL*. Also: any change to the issue title itself
+     (the generator reads it verbatim into `title`). The
+     [pre-push hygiene gates in Step 5b 1b](#decision-flow) all
+     scan fields in this bucket; the bucket exists for the same
+     reason the gates do — these are the values that ship to
+     `cve.org` and stay there.
+   - **Non-CVE-affecting** — label flips, milestone touches,
+     assignee swaps, project-board column moves, status-rollup
+     entries, reporter Gmail drafts, RM hand-off comments
+     (template-bodied, no per-tracker CVE content). These
+     change tracker state but do not alter the published CVE
+     record.
+
+4. **Walk CVE-affecting trackers individually; bundle the rest.**
+   The two buckets are presented to the user differently:
+
+   - **Non-CVE-affecting bucket** — fold into one combined
+     proposal, same shape as before this change. The user
+     confirms once with `all`, `NN:all`, `NN:1,3`, or per-issue
+     subsets, and the orchestrator applies them sequentially.
+     This bucket is bundled because the actions are reversible,
+     low-blast-radius, and do not leak into public CVE surfaces.
+   - **CVE-affecting bucket** — walk **one tracker at a time**,
+     even when many trackers are in the bulk run. For each
+     CVE-affecting tracker the orchestrator:
+     1. Presents a self-contained per-tracker proposal —
+        CVE ID, gate-failure summary, every proposed body-field
+        update with old / new value side by side, the planned
+        regen+push action, any deferral conditions. The proposal
+        is the only context the user needs to read to confirm.
+     2. Waits for explicit user confirmation (`OK`, item subset,
+        free-form edits, or `skip`). A confirmed bundle from the
+        previous tracker does **not** carry to the next.
+     3. Applies the confirmed items + Step 5/5b regen+push for
+        that one tracker, then moves to the next.
+
+   **Why the per-tracker walk for CVE-affecting changes.** A
+   bundled confirmation across N CVE-affecting trackers
+   compresses N independent CVE records into one yes/no, which
+   makes it too easy to nod through a body-field rewrite that
+   ships to `cve.org` (where it stays — `cve.org` records are
+   public-by-default and edits land as new revisions, not silent
+   overwrites). The five pre-push hygiene gates in
+   [Step 5b 1b](#decision-flow) catch *mechanical* drift (bare
+   CWE, missing upgrade target, etc.) but they cannot catch
+   *judgment* drift — whether the team agrees the summary's
+   threat model is right, whether the credit line names the
+   right person, whether the CWE choice fits the patch's
+   nature. Those decisions belong with the user, one record at
+   a time. The non-CVE-affecting bucket does not share this
+   property (a wrong label is reverted with a single `gh issue
+   edit`; a wrong public CVE summary requires a record
+   revision that downstream feeds re-pick-up).
+
+   **No `--bundled` override.** This is the default and only
+   mode for the CVE-affecting bucket. The user can still
+   `skip` a tracker, or interrupt mid-walk and ask the
+   orchestrator to abort the rest; what they cannot do is
+   collapse multiple CVE pushes into one confirmation. The
+   round-trip cost (one extra confirmation prompt per CVE) is
+   the point: it forces a re-read of the per-tracker proposal
+   right before the push lands on `cve.org`.
+
+   **Walk order.** Within the CVE-affecting bucket, walk
+   trackers in **ascending tracker-number order** unless the
+   user names a different order at confirmation. Deterministic
+   order makes the walk predictable across reruns and lets the
+   user say *"do #232 last, I want to think about it"* without
+   the orchestrator inventing a heuristic.
+
+5. **Apply sequentially, not in parallel.** Even though
+   assessment ran in parallel, the apply phase must be
+   sequential so `gh`-rate-limit surprises, partial failures,
+   and user interrupts stay legible. Do not spawn subagents for
+   the apply phase.
 
 ### Subagent report shape
 
@@ -765,6 +838,7 @@ update, label change, or next-step recommendation in Step 2:
 | The *"Short public summary for publish"* body field is populated but does **not** state the triggering conditions — the rendered text describes the bug mechanism without identifying (a) the attacker role / capability, (b) the deployment configuration that has to be active, OR (c) the action the attacker takes against which surface. Detector heuristic: scan the summary for any of these phrases — *"an authenticated [\\w ]+ user"*, *"a Dag author"*, *"an attacker with"*, *"a user able to"*, *"when [\\w]+ is (configured\|enabled\|set)"*, *"affects deployments where"*, *"by [verb-ing]"*, *"who [verb-s]"*. If fewer than two of the three (who / when / action) are unambiguously present, the summary fails the trigger-conditions check. | Propose expanding the summary to add the missing condition(s) per the *triggering conditions* requirement in Step 2b — `who` (attacker role / required capability), `when` (deployment shape / config / feature that has to be active), `action` (the step taken against which surface). **Why:** the reader scans the published advisory asking *"does this affect us?"*, and the answer comes from the trigger context, not the bug mechanism. A summary that omits one of the three forces them to read the issue PR / patch to figure out the trigger — exactly the work the advisory is meant to remove. Apply this on every sync run that surfaces a trigger-incomplete summary, even when no other body update is being proposed for the tracker. After updating, regenerate the CVE JSON attachment so the published `descriptions[].value` reflects the trigger context. |
 | The tracker is an **incomplete-fix follow-up to another CVE** — detected by any of: the rollup or body mentions *"incomplete fix for `CVE-YYYY-NNNNN`"* / *"follow-up to `CVE-YYYY-NNNNN`"* / *"sibling tracker"*; the title contains a *"(incomplete fix for `CVE-YYYY-NNNNN`)"* parenthetical; the `affected[]` array names a different `packageName` than the referenced prior CVE; OR the tracker was opened as a split from a closed-`announced` tracker whose CVE is already PUBLISHED — **AND** the *Short public summary for publish* body field does not yet contain BOTH (a) the prior `CVE-YYYY-NNNNN` ID verbatim AND (b) a *"users who already applied [the prior CVE's fix] should also apply this one"* clause naming the current product/package. | Propose expanding the summary to add the cross-CVE + cross-product upgrade ask per the *"Incomplete-fix-to-another-CVE"* paragraph in Step 2b. Concretely, the summary must (1) name the prior CVE explicitly, (2) state that the prior fix did not cover the current product/surface, (3) tell users who already applied the prior fix to **also** apply this one (the two are complementary, not duplicates). **Why:** when a CVE is published as a follow-up to a prior CVE, the reader's default reading is *"I already applied the earlier fix; this is a duplicate."* Without explicit cross-CVE + cross-product framing in the summary, downstream consumers miss that two upgrades are needed. Apply this fix on every sync run that surfaces an incomplete-fix tracker whose summary lacks the cross-CVE clause, even when no other body update is being proposed. After updating, regenerate the CVE JSON attachment so the published `descriptions[].value` reflects the cross-CVE relationship. |
 | The *"CWE"* body field is populated with a bare `CWE-NNN` token (no description text) — e.g. `CWE-22` or `CWE-502` alone, without the canonical short description that follows in the format `CWE-NNN: <Title>` | Propose expanding the field to `CWE-NNN: <Canonical Title>` per the MITRE CWE catalog (e.g. `CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')`, `CWE-502: Deserialization of Untrusted Data`, `CWE-601: URL Redirection to Untrusted Site ('Open Redirect')`). **Prefer a CWE from the project's *advised CWEs* list** when one is declared in [`<project-config>/scope-labels.md`](../../../<project-config>/scope-labels.md) or the project's CVE-tool config — the advised list captures the CWE classes the project's security team has standardised on, and using one from the list makes cross-CVE comparison cleaner. **Why:** the published CVE record's `problemTypes[].descriptions[].description` field carries the human-readable text the advisory mailing list and `cve.org` render; a bare `CWE-NNN` is technically a valid identifier but useless to readers who don't keep the MITRE numbering in their head. The longer form costs nothing to add and significantly improves the published advisory's clarity. Apply on every sync run that surfaces a bare CWE token. After updating, regenerate the CVE JSON attachment so `problemTypes[]` carries the expanded form. |
+| The tracker's *Security mailing list thread* body field references a **private scanner product** (declared in [`<project-config>/scanner-products.md`](../../../<project-config>/scanner-products.md) — e.g. internal SAST, partner-shared scan, unpublished bug-bounty pipeline) **AND** the *Reporter credited as* body field names a person rather than `anonymous` / a public handle, **AND** there is no signal the finder consented to public credit (no inbound `security@` message from them under their own name, no public HackerOne / huntr.dev report URL on the thread, no explicit *"please credit me as `<name>`"* line). | Propose rewriting the *Reporter credited as* field to `anonymous` and stripping the scanner product name from the *Short public summary for publish* body field text (e.g. *"Mythos scan flagged that…"* → drop the scanner-product clause; *"Imported from internal SAST"* → drop). **Audit-trail surfaces stay untouched**: the *Security mailing list thread* body field, the status-rollup comment, and the Gmail thread keep the original scanner-product + person-name references for security-team auditing. Only the CVE-record-bound surfaces (summary, credit) get the anonymise scrub. **Why:** scanner-tool product names are commercial / IP-sensitive (naming the scanner publicly amounts to free advertising and some contracts restrict attribution), and individual finders sourced from private channels haven't consented to public credit (their org pointed a scanner at the codebase and shared findings privately — there was no `security@` thread asking to be named). The *combination* of (named individual + named proprietary scanner) also pattern-leaks the discovery channel and how that org runs security on its codebase. Apply on every sync run that surfaces the signal; the *Reporter credited as* field is read verbatim by the CVE-JSON generator into `credits[]` and the *Short public summary for publish* is read into `descriptions[].value`. The same scrub re-runs as the sixth pre-push hygiene gate in [Step 5b 1b](#decision-flow) — it catches the case where the body update was missed at proposal time and the JSON would otherwise ship with the scanner name still in it. **Exempt cases**: when the finder already self-credited under a public name (HackerOne report URL, huntr.dev public report URL, the reporter's own `security@` message naming themselves), keep the named credit — the scrubber must not anonymise a credit that was already public elsewhere. |
 | The **issue title** contains adopter-specific or internal noise that would otherwise ship to the public CVE record — leading or trailing project-name tokens (e.g. ``Apache Airflow:`` / ``in Apache Airflow`` / ``(Apache Airflow X.Y)``), internal split markers (``(split from #NNN)`` / ``(split for scope clarity from #NNN)``), report-form classifiers (``[ Security Report ]`` / ``[Security Issue]``), external-tracker IDs in parentheses or brackets (``[GHSA-xxxx-xxxx-xxxx]``, ``(ZDRES-NNNNN)``, ``(HUNTR-NNNNN)``, ``(GHSL-NNNN-NNN)``), or version-noise suffixes (``(v3.2.1)``, ``(3.x)``). The check applies on every sync pass, including trackers whose title was previously clean but has drifted since allocation. | Propose updating the title via `gh issue edit <N> --title "<cleaned>"`. **Reuse the [`security-cve-allocate` Step 2 title-strip cascade](../security-cve-allocate/SKILL.md#step-2--compute-the-cve-ready-title)** — both the leading-pattern set (project-name tokens, `Security (Report\|Issue\|Vulnerability\|Bug)` prefixes) and the trailing-pattern set (`in (Apache )?Airflow`, GHSA/ZDRES/HUNTR/GHSL trailing IDs, `(split from #N)` parentheticals). **Why this matters even though `security-cve-allocate` already strips at allocation time:** the GitHub issue title is read **verbatim** by the CVE-JSON generator into `containers.cna.title`, which ships in the published advisory and on `cve.org`. Titles drift between allocation and the final regen (manual edits to add context, sibling-tracker splits, GHSA-relay imports that append the GHSA ID), so the sync skill must re-run the same cleanup on every pass. **Preserve stripped context as audit trail** in the issue body (a `### Related references` section near the bottom) or in the rollup — internal pointers like *"split from [#NNN](...)"* are useful for the security team and must not be silently lost; just move them off the user-facing title. After updating the title, regenerate the CVE JSON attachment so the published `title` field reflects the cleaned value. If the strip would collapse the title to fewer than 3 words, **flag the ambiguity** in the proposal (matching `security-cve-allocate`'s safety) and let the user override — over-stripping is worse than leaving one redundant word. |
 | A release carrying the fix has shipped. Detection is **scope-dependent** — different scope labels on a project can ride different release trains, each with its own *"is it released?"* signal (which artifact registry to consult, what to query, how to map a tracker's milestone to that registry, partial-release edge cases). The per-scope detection recipe lives in [`<project-config>/scope-labels.md` — *Detecting that a fix release has shipped*](../../../<project-config>/scope-labels.md#detecting-that-a-fix-release-has-shipped). The "or an explicit *fix shipped in X.Y.Z* comment" fallback applies across all scopes regardless of the project-specific signal. | **Two-stage gate: every mandatory CVE field must be populated AND the CVE record state in Vulnogram must be `REVIEW`.** Before proposing either the label swap or the assignee swap, run both checks. **Stage 1 — body fields**: check that all six body fields are populated (not empty, not `_No response_`): *CWE*, *Affected versions*, *Severity*, *Reporter credited as*, *Short public summary for publish*, *PR with the fix*. If any is missing, **do NOT propose the hand-off**. Instead, propose posting (or PATCH-updating) the *Remediation-developer fill-fields comment* per the dedicated bullet in Step 2b — issue stays assigned to the remediation developer; no label swap, no assignee swap, no RM hand-off. **Stage 2 — CVE state**: with Stage 1 clear, Step 5b's `vulnogram-api-record-update` push includes `body.CNA_private.state = "REVIEW"` (the new auto-promote behaviour — see Step 5b for details). After the push, verify the record state is now `REVIEW` (via `vulnogram-api-record-fetch` / the equivalent state probe). If the state is still `DRAFT` after the push (push failed, CNA-schema validation rejected the JSON, transient error), **re-fire the fill-fields comment** with the refreshed blocker description, and **do NOT propose the hand-off / label swap / assignee swap on this pass**. The RM never receives a hand-off while the record is in `DRAFT`. **When both stages are clear (state == REVIEW)**: propose swapping `pr merged` → `fix released` (Step 12). This is the release manager's cue to own Steps 13–15 (advisory send → URL capture → Vulnogram PUBLIC → close). **Also propose swapping the assignee from the remediation developer to the release manager** (looked up via the three-source cascade in Step 2c — [`<project-config>/release-trains.md`](../../../<project-config>/release-trains.md) "Release managers for releases currently relevant to the security tracker" → Release Plan wiki → `[RESULT][VOTE]` thread on `dev@`), so the issue list reflects ownership hand-off. See the *Assignee hand-off at the `fix released` transition* paragraph under **Assignees** in Step 2b for the full rule. |
 | GHSA state transition (opened, accepted, published, rejected) in a GHSA-forwarded email | If the GHSA is closed as "not accepted" but the security team accepted the report on `security@`, flag the divergence in the status comment so it is not lost. |
@@ -2899,7 +2973,7 @@ Step 6 below describes how to verify the state advance landed
    CVE worthy). There is no record to push to.
 
 1b. **Pre-push hygiene-gate scan.** Before any push call, re-scan
-   the JSON about to be pushed for the five pre-push gates that
+   the JSON about to be pushed for the six pre-push gates that
    make the published CVE record user-facing:
 
    - **Title strip cascade** — `containers.cna.title` must have
@@ -2927,6 +3001,35 @@ Step 6 below describes how to verify the state advance landed
    - **CWE field has the long-form description** —
      `problemTypes[0].descriptions[0].description` must be in
      the `CWE-NNN: <Title>` shape, not a bare `CWE-NNN` token.
+   - **Anonymise private-scanner and internal-finder names**
+     — when the tracker's source is a private scanner, an
+     internal-partner-shared scan, or an unpublished bug-bounty
+     pipeline (signal: the *Security mailing list thread* body
+     field references a scanner product name or names an
+     individual reporter who arrived through a private channel
+     rather than `security@`), the regenerated JSON must NOT
+     carry the scanner product name or the individual finder's
+     name in any public-facing field. Scan
+     `containers.cna.descriptions[].value` (the public summary)
+     and `containers.cna.credits[].value` for: known
+     scanner-product tokens declared in
+     [`<project-config>/scanner-products.md`](../../../<project-config>/scanner-products.md)
+     (e.g. `Mythos`, `<vendor> SAST`, `<scanner-tool>`); and
+     for `credits[].value` entries that match a person-name
+     pattern (`<First> <Last>` shape) when the
+     `discovery-channel` signal is private. On match: propose
+     replacing the credit value with `anonymous` and stripping
+     the scanner product name from the summary text. The
+     tracker's *Security mailing list thread* body field stays
+     unchanged (it is the private audit trail); only the
+     CVE-record JSON gets the anonymise scrub. **Public
+     bug-bounty submissions and named ASF-community reporters
+     are exempt** (the scrubber must not anonymise a credit
+     that was already public elsewhere — HackerOne report URL,
+     huntr.dev public report, the reporter's own self-disclosure
+     on `security@` with their real name). Rationale, examples,
+     and the full opt-in / opt-out matrix live in
+     [`<project-config>/scanner-products.md`](../../../<project-config>/scanner-products.md).
 
    When any gate fails the JSON the regen just produced, the
    right recovery is **not** to push — fix the underlying body
