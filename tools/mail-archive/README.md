@@ -79,6 +79,25 @@ placeholder above is named, with a one-paragraph justification, so
 that an adopter who needs that backend can author the adapter
 without re-inventing the contract.
 
+The PonyMail adapter's `search_thread_url` template,
+`fetch_thread_by_url` recipes, `list_recent_threads` filter, and
+`publication_signal_url` all live in
+[`tools/ponymail/`](../ponymail/). This is the only mail-archive
+adapter shipping today; the contract above describes the interface
+for additional adapters (Hyperkitty / Discourse / Google Groups /
+GitHub Discussions / none).
+
+The skills that consume this contract today are:
+
+- [`security-issue-import`](../../.claude/skills/security-issue-import/SKILL.md)
+  — PonyMail URL construction at receipt time (Step 5: per-month
+  search URL + per-thread permalink verification).
+- [`security-issue-sync`](../../.claude/skills/security-issue-sync/SKILL.md)
+  — Step 1c / 1e / 1h / 2b — thread lookup and advisory-published
+  signal scan.
+- [`security-issue-invalidate`](../../.claude/skills/security-issue-invalidate/SKILL.md)
+  — relay-thread search for the closing-reply step.
+
 ## Interface
 
 Every adapter exposes the verbs below. Each verb declares:

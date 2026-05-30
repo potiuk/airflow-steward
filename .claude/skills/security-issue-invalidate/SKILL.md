@@ -545,23 +545,34 @@ named explicitly** in the Step 5e rollup terminal entry:
   call above returns 403, or the operator is running from a
   triager account that does not hold GHSA-write membership.
   In that case the GHSA channel is **not** self-sufficient;
-  the closure must be relayed via ASF Security so Arnout
-  Engelen (or another `@apache.org` forwarder with the
-  required GHSA-write permissions) can post the closure
-  comment / state-change on our behalf. Draft an
-  ASF-relay-shape message per
-  [`tools/gmail/asf-relay.md`](../../../tools/gmail/asf-relay.md):
-  recipient is `engelen@apache.org` (or the named forwarder
-  who relayed the original GHSA report); body includes the
-  clickable GHSA URL on its own line + a paste-ready block
-  in the reporter's voice with the invalid-disposition
-  rationale + canonical CVE-ID (when `duplicate`) for the
-  forwarder to post on the GHSA. Record in the rollup
-  terminal entry: *"GHSA-relay-only reporter channel
-  (GHSA-XXXX-XXXX-XXXX); operator lacks GHSA-write access on
-  `<upstream>`. ASF-relay draft `<draftId>` queued to
-  `<forwarder@apache.org>` requesting they post the closure
-  comment on the GHSA on our behalf — awaiting user review."*
+  the closure must be relayed via a forwarder with the
+  required GHSA-write permissions so they can post the
+  closure comment / state-change on our behalf. If the
+  parent tracker was imported via a forwarder adapter (per
+  the optional
+  [`security-issue-import-via-forwarder`](../security-issue-import-via-forwarder/SKILL.md)
+  sub-skill — i.e. when `forwarders.enabled` is non-empty in
+  `<project-config>/project.md` and a registered adapter
+  applies), route the drafted message through that adapter's
+  `contact_handle` and use the adapter's
+  `reporter_addressing_block` convention. See
+  [`tools/forwarder-relay/README.md`](../../../tools/forwarder-relay/README.md)
+  for the contract. The drafted body includes the clickable
+  GHSA URL on its own line + a paste-ready block in the
+  reporter's voice with the invalid-disposition rationale +
+  canonical CVE-ID (when `duplicate`) for the forwarder to
+  post on the GHSA. Worked example: for an `airflow-s`
+  adopter with the `asf-security` forwarder enabled, the
+  adapter resolves the contact to `engelen@apache.org` (or
+  the named `@apache.org` forwarder who relayed the original
+  GHSA report) and the paste-ready block follows the
+  [`tools/gmail/asf-relay.md`](../../../tools/gmail/asf-relay.md)
+  shape. Record in the rollup terminal entry: *"GHSA-relay-only
+  reporter channel (GHSA-XXXX-XXXX-XXXX); operator lacks
+  GHSA-write access on `<upstream>`. Forwarder-relay draft
+  `<draftId>` queued to `<forwarder-contact>` requesting they
+  post the closure comment on the GHSA on our behalf —
+  awaiting user review."*
 
 For every other `security@`-imported tracker, the invalidation
 reply is one of the five
@@ -575,16 +586,26 @@ the **recipient** and the **body shape**.
      `tracker.reporterEmail` (the `From:` of the inbound root
      message). The reply lands on the inbound thread via thread
      attachment.
-   - **Via-forwarder mode** (ASF-security relay or any other case
-     in the [policy's detection list](../../../docs/security/forwarder-routing-policy.md#when-does-via-forwarder-mode-apply)):
-     `toRecipients` is the **forwarder contact** (the
-     `@apache.org` forwarder address from the inbound `From:` for
-     ASF-relay, or the named contact from the explicit
-     no-direct-contact marker comment). The body follows the
+   - **Via-forwarder mode** (the parent tracker was imported via
+     a forwarder adapter — see the optional
+     [`security-issue-import-via-forwarder`](../security-issue-import-via-forwarder/SKILL.md)
+     sub-skill and the
+     [policy's detection list](../../../docs/security/forwarder-routing-policy.md#when-does-via-forwarder-mode-apply)):
+     `toRecipients` is the **forwarder contact** resolved via the
+     matching adapter's `contact_handle` per
+     [`tools/forwarder-relay/README.md`](../../../tools/forwarder-relay/README.md)
+     (or the named contact from an explicit no-direct-contact
+     marker comment on the tracker). The body follows the
+     adapter's `reporter_addressing_block` convention and the
      *Report assessed as invalid* milestone-body shape in the
-     policy doc — short, references the external identifier (GHSA
-     ID, HackerOne URL) rather than restating the technical
-     detail.
+     policy doc — short, references the external identifier
+     (GHSA ID, HackerOne URL) rather than restating the
+     technical detail. Worked example: for an `airflow-s` adopter
+     with the `asf-security` forwarder enabled, the adapter
+     resolves the contact to the `@apache.org` forwarder address
+     from the inbound `From:` and the paste-ready reporter block
+     follows the [`tools/gmail/asf-relay.md`](../../../tools/gmail/asf-relay.md)
+     shape.
    - `ccRecipients`: always includes `<security-list>`
      (`<security-list>` for the adopting project) —
      value comes from
@@ -612,13 +633,15 @@ the **recipient** and the **body shape**.
      body MUST name the canonical `CVE-YYYY-NNNNN` ID
      verbatim — e.g. *"This is the same root cause as
      `CVE-2026-XXXXX` which we already track and ship the fix
-     for in `apache-airflow` X.Y.Z."* This lets the ASF
-     Security team's dedup workflow group the two threads
-     (per Arnout Engelen's 2026-05-29 ASF-Security ask in the
-     Kyuubi SSRF context). For via-forwarder mode this
-     additionally goes inside the *paste-ready block in the
-     reporter's voice* per the
-     [asf-relay.md shape](../../../tools/gmail/asf-relay.md).
+     for in `apache-airflow` X.Y.Z."* This lets a forwarder's
+     dedup workflow group the two threads (worked example: the
+     ASF Security team's dedup workflow groups by canonical
+     CVE-ID, per Arnout Engelen's 2026-05-29 ASF-Security ask
+     in the Kyuubi SSRF context). For via-forwarder mode this
+     additionally goes inside the adapter's paste-ready
+     reporter-voice block per the matching adapter's
+     `reporter_addressing_block` convention — see
+     [`tools/forwarder-relay/README.md`](../../../tools/forwarder-relay/README.md).
    - **Polite-but-firm.** Per
      [`AGENTS.md`](../../../AGENTS.md#tone-polite-but-firm--no-room-to-wiggle), state
      the team's position once, clearly, with reasoning. Do not
@@ -661,11 +684,11 @@ upsert recipe). Shape:
 
 **Reporter notification:** <one of — required line, never omit:>
 - **`security@`-imported, direct-reporter mode:** Gmail draft `<draftId>` created on thread `<threadId>` anchored at message `<messageId>` — awaiting user review.
-- **`security@`-imported, via-forwarder mode (ASF-relay):** ASF-relay draft `<draftId>` to `<forwarder@apache.org>` on thread `<threadId>` per [`asf-relay.md`](https://github.com/apache/airflow-steward/blob/main/tools/gmail/asf-relay.md) shape (clickable URL + paste-ready reporter-voice block) — awaiting user review.
+- **`security@`-imported, via-forwarder mode:** Forwarder-relay draft `<draftId>` to `<forwarder-contact>` on thread `<threadId>` per the matching adapter's `reporter_addressing_block` convention (clickable URL + paste-ready reporter-voice block) — awaiting user review. For an `airflow-s` adopter with the `asf-security` forwarder enabled, the contact resolves to an `@apache.org` forwarder and the block follows the [`tools/gmail/asf-relay.md`](https://github.com/apache/airflow-steward/blob/main/tools/gmail/asf-relay.md) shape.
 - **`security@`-imported, `duplicate` disposition:** *(same as direct or via-forwarder above; the draft body MUST name the canonical CVE-ID per Step 5d).*
 - **No notification owed — internal audit finding:** Tracker imported from project-internal markdown audit (`<source-markdown>`), no inbound `security@` thread, no reporter to notify.
 - **No Gmail draft owed — GHSA-relay-only, operator has GHSA-write access:** GHSA-relay-only reporter channel (`GHSA-XXXX-XXXX-XXXX`); closure communicated as GHSA comment `<URL>` / advisory state set to `<withdrawn|informational>`. No Gmail reply needed.
-- **ASF-relay draft owed — GHSA-relay-only, operator lacks GHSA-write access:** GHSA-relay-only channel (`GHSA-XXXX-XXXX-XXXX`); operator's account does not have GHSA-write on `<upstream>`. ASF-relay draft `<draftId>` queued to `<forwarder@apache.org>` requesting they post the closure comment on the GHSA on our behalf — awaiting user review.
+- **Forwarder-relay draft owed — GHSA-relay-only, operator lacks GHSA-write access:** GHSA-relay-only channel (`GHSA-XXXX-XXXX-XXXX`); operator's account does not have GHSA-write on `<upstream>`. Forwarder-relay draft `<draftId>` queued to `<forwarder-contact>` requesting they post the closure comment on the GHSA on our behalf — awaiting user review.
 - **PR-imported:** none (no reporter; per [Reporter credit policy](https://github.com/<tracker>/blob/<tracker-default-branch>/.claude/skills/security-issue-import-from-pr/SKILL.md#reporter-credit-policy-for-public-pr-imports)).
 - **Indeterminate import path:** none (flag from Step 2 surfaced; user explicitly chose silent close).
 

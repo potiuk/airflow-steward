@@ -2335,27 +2335,25 @@ will change and *why*. Group them by category:
   artifact link. See the "Brevity: emails state facts, not context"
   section of [`AGENTS.md`](../../../AGENTS.md).
 
-  **Apply the [forwarder-routing policy](../../../docs/security/forwarder-routing-policy.md)
-  to decide whether to propose the draft at all.** Run the detection
-  rules in the policy doc to determine the tracker's routing mode:
-
-  * **Direct-reporter mode** — proceed as written above; the draft
-    targets the reporter on the inbound thread.
-  * **Via-forwarder mode + event is on the [milestone list](../../../docs/security/forwarder-routing-policy.md#milestones--do-relay)**
-    (report accepted as valid, CVE allocated, advisory sent,
-    invalidation, or a specific *"we need additional information"*
-    question) — propose the draft to the **forwarder contact**, not
-    the reporter, using the short milestone-body shape from the
-    policy doc. Reference the external identifier (GHSA ID,
-    HackerOne URL, internal ticket number) rather than repeating
-    the technical detail of the report.
-  * **Via-forwarder mode + event is NOT on the milestone list**
-    (regular workflow status, credit-form questions, reviewer-
-    comment relays) — **suppress the draft entirely**. Record in
-    the proposal recap *"skipped reporter draft: `<event>` not on
-    the via-forwarder milestone list"* so the user can see why
-    no message was proposed. The forwarder is not pinged with
-    low-signal updates.
+  **Route through the forwarder-relay adapter when one is registered.**
+  If the parent tracker carries a forwarder-adapter marker (set by
+  the optional
+  [`security-issue-import-via-forwarder`](../security-issue-import-via-forwarder/SKILL.md)
+  sub-skill when `forwarders.enabled` is non-empty in
+  [`<project-config>/project.md`](../../../<project-config>/project.md)
+  and the inbound message matched a registered adapter), route any
+  drafted reply through that adapter's `contact_handle` and use the
+  adapter's `reporter_addressing_block` convention. See
+  [`tools/forwarder-relay/README.md`](../../../tools/forwarder-relay/README.md)
+  for the contract — including the per-event do-relay / suppress
+  matrix the adapter applies to decide whether a draft should be
+  proposed at all (e.g. CVE-allocated and advisory-sent events
+  relay; routine credit-form questions and reviewer-comment relays
+  are suppressed). When no adapter is registered (the
+  `forwarders.enabled` list is empty, or the tracker has no
+  forwarder-adapter marker), proceed in direct-reporter mode as
+  written above — the draft targets the reporter on the inbound
+  thread.
 
   **Never send.** Always create a draft. Prefer attaching it to the
   inbound mail thread (the default `claude_ai_mcp` backend resolves

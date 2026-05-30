@@ -142,6 +142,7 @@ Capabilities for every skill currently in
 | `security-issue-import` | `capability:intake` |
 | `security-issue-import-from-md` | `capability:intake` |
 | `security-issue-import-from-pr` | `capability:intake` |
+| `security-issue-import-via-forwarder` | `capability:intake` |
 | `security-issue-sync` | `capability:intake` *(+ `capability:reconciliation` once [#337](https://github.com/apache/airflow-steward/issues/337) lands the ASF-dashboard step)* |
 | `setup-shared-config-sync` | `capability:intake` + `capability:setup` *(reconciles user-scope config to a sync repo; the act is intake, the subject is setup)* |
 | `security-cve-allocate` | `capability:resolve` |

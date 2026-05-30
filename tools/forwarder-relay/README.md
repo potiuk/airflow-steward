@@ -5,6 +5,7 @@
 - [tools/forwarder-relay/ — adapter contract](#toolsforwarder-relay--adapter-contract)
   - [What "a relay message" means](#what-a-relay-message-means)
   - [Today's adapters](#todays-adapters)
+    - [Sub-skill consumers](#sub-skill-consumers)
   - [Interface](#interface)
     - [`detect(message) -> adapter_name | null`](#detectmessage---adapter_name--null)
     - [`extract_credit(body) -> {name, kind, raw_string} | null`](#extract_creditbody---name-kind-raw_string--null)
@@ -99,6 +100,29 @@ support, they implement an adapter directory under
 `tools/forwarder-relay/<name>/` that satisfies the interface
 below, and add `<name>` to the `forwarders.enabled` list in
 their `<project-config>/project.md`.
+
+The ASF-security adapter's `preamble_match` regex,
+`credit_extraction_rule`, `contact_handle` (the `@raboof`
+default, lifted into project.md
+`forwarders.asf-security.contact_handle`), and
+`reporter_addressing_block` convention all live in
+[`tools/gmail/asf-relay.md`](../gmail/asf-relay.md). This is
+the only forwarder adapter shipping today; the contract above
+describes the interface for additional adapters.
+
+### Sub-skill consumers
+
+ASF adopters install the optional sub-skill
+[`security-issue-import-via-forwarder`](../../.claude/skills/security-issue-import-via-forwarder/SKILL.md)
+to enable forwarder-aware handling. The sub-skill consumes the
+`forwarders.enabled` config knob from
+[`<project-config>/project.md`](../../projects/_template/project.md)
+and runs after the main classification cascade in
+`security-issue-import`, `security-issue-invalidate`, and
+`security-issue-sync`. Generic skill bodies no longer carry
+the ASF-relay row inlined in their main classification tables
+— they reference the sub-skill as the *"follow this if
+forwarder mode is enabled"* extension instead.
 
 ## Interface
 
