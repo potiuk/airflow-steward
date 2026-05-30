@@ -26,6 +26,11 @@ license: Apache-2.0
                        (example: airflow-s/airflow-s for the Apache Airflow security team)
      <upstream>       → value of `upstream_repo:` in <project-config>/project.md
                        (example: apache/airflow)
+     <cve-tool>       → adapter directory under `tools/` named by
+                       `cve_authority.tool:` in <project-config>/project.md
+                       (example: cve-tool-vulnogram when `tool: vulnogram`,
+                       i.e. the ASF default that resolves to
+                       `tools/cve-tool-vulnogram/`).
      Before running any bash command below, substitute these with the
      concrete values from the adopting project's <project-config>/project.md. -->
 
@@ -2912,54 +2917,67 @@ recap so the user has one-click access to the attached JSON.
 
 ---
 
-## Step 5b — Push the regenerated JSON to Vulnogram via the OAuth API
+## Step 5b — Push the regenerated JSON to the CVE tool via the adapter
 
-The regenerated JSON above is paste-ready for Vulnogram. **When the
-operator's machine has a valid Vulnogram OAuth session configured**
-(the one-time
-`uv run --project <framework>/tools/cve-tool-vulnogram/oauth-api vulnogram-api-setup`
-per machine — see
+The regenerated JSON above is paste-ready for the project's CVE
+tool. **When the operator's machine has a valid authenticated session
+configured** for the adapter named in
+`cve_authority.tool` (one-time setup per the
+`tools/<cve-tool>/README.md` adapter doc — for the Vulnogram adapter,
+that is `uv run --project <framework>/tools/cve-tool-vulnogram/oauth-api vulnogram-api-setup`
+backing the contract's authenticated-session probe; see
 [`tools/cve-tool-vulnogram/oauth-api/README.md`](../../../tools/cve-tool-vulnogram/oauth-api/README.md)),
-**sync pushes the JSON to the record directly** instead of leaving the
-paste step to the release manager. The push is mechanical and follows
-from the same JSON the user just approved as part of the body update.
+**sync pushes the JSON to the record directly** through the
+adapter's `push_update(cve_id, fields, state_transition=None)`
+method (per [`tools/cve-tool/README.md`](../../../tools/cve-tool/README.md))
+instead of leaving the paste step to the release manager. The push
+is mechanical and follows from the same JSON the user just approved
+as part of the body update.
 
-**State auto-promote (DRAFT → REVIEW) — driven by the generator,
-not by sync.** The CVE JSON the generator produces already carries
-the correct `CNA_private.state` value based on the readiness of
-the tracker's body fields. The generator's logic (see
+**State auto-promote from `allocated` to `review-ready` — driven by
+the generator, not by sync.** The CVE JSON the generator produces
+already carries the correct `CNA_private.state` value based on the
+readiness of the tracker's body fields. The generator emits the
+adapter-native state token, which the contract maps onto the generic
+state verbs the skills speak in (see the *Generic state verbs* table
+in [`tools/cve-tool/README.md`](../../../tools/cve-tool/README.md)).
+For the Vulnogram adapter the native tokens are `DRAFT` / `REVIEW` /
+`READY` / `PUBLIC`; the generator's logic (see
 `compute_cna_private_state` in
-[`tools/cve-tool-vulnogram/generate-cve-json`](../../../tools/cve-tool-vulnogram/generate-cve-json/src/generate_cve_json/cve_json.py)):
+[`tools/cve-tool-vulnogram/generate-cve-json`](../../../tools/cve-tool-vulnogram/generate-cve-json/src/generate_cve_json/cve_json.py))
+emits:
 
-- `DRAFT` — when any required field is missing (no title, no
-  description, no affected versions, no CWE, no non-Unknown
-  severity, no credit, no reference).
-- `REVIEW` — when every field a release manager needs to send
-  the advisory is present, **but** no public advisory URL has
-  been captured yet.
-- `PUBLIC` — when the CNA is review-ready AND at least one
-  `references[]` entry is tagged `vendor-advisory` (i.e. the
-  *Public advisory URL* body field is populated with the
-  archived users-list URL).
+- `allocated` (Vulnogram: `DRAFT`) — when any required field is
+  missing (no title, no description, no affected versions, no
+  CWE, no non-Unknown severity, no credit, no reference).
+- `review-ready` (Vulnogram: `REVIEW`) — when every field a
+  release manager needs to send the advisory is present, **but**
+  no public advisory URL has been captured yet.
+- `public` (Vulnogram: `PUBLIC`) — when the CNA is review-ready
+  AND at least one `references[]` entry is tagged
+  `vendor-advisory` (i.e. the *Public advisory URL* body field
+  is populated with the archived users-list URL).
 
-Sync's role is therefore **just** to push the generated JSON and
-verify the saved state matches what the generator computed.
-Vulnogram accepts the state field verbatim from the pushed
-document; no separate state-flip call is needed for the
-`DRAFT` → `REVIEW` transition. This is the load-bearing gate for
-the release-manager hand-off (see Step 2b's *Two-stage gate*):
-the RM never receives the hand-off comment while the record is
-still in `DRAFT`.
+Sync's role is therefore **just** to push the generated JSON via
+the adapter's `push_update` and verify, through `fetch_current_state`,
+that the saved state matches what the generator computed. The
+contract guarantees `push_update` writes any embedded state field
+verbatim where the underlying tool supports it; no separate
+state-flip call is needed for the `allocated` → `review-ready`
+transition. This is the load-bearing gate for the release-manager
+hand-off (see Step 2b's *Two-stage gate*): the RM never receives
+the hand-off comment while the record is still in `allocated`.
 
 The remaining transitions stay separate:
 
-- `REVIEW` → `READY` is a **release-manager UI click** in
-  Vulnogram, done as Step 1 of the RM hand-off after any reviewer
-  comments on the record are resolved. (The generator does not
-  emit `READY` — it is intentionally a human decision that
-  reviewer feedback is closed.)
-- `READY` → `PUBLIC` is **sync-driven** via the
-  `vulnogram-api-record-publish` CLI (see Step 4 below), fired
+- `review-ready` → `publish-ready` is a **release-manager UI
+  action** in the CVE tool (for the Vulnogram adapter, the State
+  dropdown going `REVIEW` → `READY`), done as Step 1 of the RM
+  hand-off after any reviewer comments on the record are resolved.
+  The generator does not emit `publish-ready` — it is intentionally
+  a human decision that reviewer feedback is closed.
+- `publish-ready` → `public` is **sync-driven** via the
+  adapter's `publish(cve_id)` method (see Step 4 below), fired
   when the advisory archive URL has been captured on
   `lists.apache.org/list.html?<users-list>` — the CNA-feed
   dispatch trigger has a real-world signal (the archived
@@ -3042,24 +3060,25 @@ Step 6 below describes how to verify the state advance landed
    of the proposed updates). Skipping the push on a gate failure
    forces the next sync iteration to surface the remaining edits.
 
-2. **Probe the session** — `vulnogram-api-check`:
-
-   ```bash
-   uv run --project <framework>/tools/cve-tool-vulnogram/oauth-api vulnogram-api-check
-   ```
-
-   Three outcomes:
+2. **Probe the adapter's authenticated session.** Invoke the
+   adapter's session-probe entrypoint (per
+   `tools/<cve-tool>/README.md`; for the Vulnogram adapter this is
+   `uv run --project <framework>/tools/cve-tool-vulnogram/oauth-api vulnogram-api-check`).
+   The contract requires the probe to return one of three outcomes:
 
    - **`valid`** → proceed to step 3.
    - **`expired`** → skip the push, surface a one-line reminder in
-     the Step 6 recap: *"Vulnogram OAuth session expired — re-run
-     `vulnogram-api-setup` to restore automatic push; using
-     manual-paste hand-off this run."* Fall through to the
+     the Step 6 recap: *"CVE-tool authenticated session expired —
+     re-run the adapter's setup entrypoint (for the Vulnogram
+     adapter, `vulnogram-api-setup`) to restore automatic push;
+     using manual-paste hand-off this run."* Fall through to the
      manual-paste hand-off variant for any 5c comment work below.
    - **`not-configured`** → skip the push silently. Not every
-     operator runs the API path; that is fine, today's manual-paste
-     hand-off still works. Fall through to the manual-paste hand-off
-     variant for any 5c comment work below.
+     operator runs the adapter-backed push path; that is fine,
+     the manual-paste hand-off (via the
+     `cve_authority.source_tab_url_template` link) still works.
+     Fall through to the manual-paste hand-off variant for any 5c
+     comment work below.
 
 3. **Extract the regenerated JSON.** The
    [`generate-cve-json`](../../../tools/cve-tool-vulnogram/generate-cve-json/SKILL.md)
@@ -3072,20 +3091,33 @@ Step 6 below describes how to verify the state advance landed
    deterministic. Conventional path:
    `/tmp/cve-<CVE-ID>-<N>.json`.
 
-4. **Push** — `vulnogram-api-record-update`:
+4. **Push the update through the adapter's `push_update` method.**
+   Invoke `push_update(cve_id, fields, state_transition=None)` per
+   [`tools/cve-tool/README.md`](../../../tools/cve-tool/README.md).
+   For the Vulnogram adapter the wire-level entrypoint backing the
+   method is `vulnogram-api-record-update`:
 
    ```bash
    uv run --project <framework>/tools/cve-tool-vulnogram/oauth-api vulnogram-api-record-update \
      --cve-id <CVE-ID> --json-file /tmp/cve-<CVE-ID>-<N>.json
    ```
 
+   The `state_transition` argument is omitted here — the JSON
+   already carries the generator-computed state field, and any
+   adapter whose tool embeds state inside the record body (the
+   Vulnogram adapter does) will write it as part of the same
+   `push_update` call. Adapters whose tool requires a separate
+   state-flip API call perform that flip internally; the contract
+   keeps the call atomic from the skill's point of view.
+
    Capture the call's exit code and `stdout` / `stderr`:
 
    - **`exit 0`** → push succeeded. Record the ISO-8601 timestamp
      (`PUSH_TIMESTAMP`); the Step 5c comment work uses the
      **OAuth-pushed variant** of the relevant template; the Step 6
-     recap includes *"CVE record auto-pushed to Vulnogram at
-     `PUSH_TIMESTAMP`."*
+     recap includes *"CVE record auto-pushed to the CVE tool at
+     `PUSH_TIMESTAMP`."* (for the Vulnogram adapter, name it in the
+     recap as *"auto-pushed to Vulnogram"*).
    - **`exit ≠ 0`** → push failed. Surface the error verbatim in
      the Step 6 recap and **fall back** to the manual-paste hand-off
      for the Step 5c comment work. Do **not** retry on the same
@@ -3093,42 +3125,54 @@ Step 6 below describes how to verify the state advance landed
      better surfaced once and re-tried on the next sync (after
      either Gmail-side or body-side state has settled).
 
-5. **Idempotence note.** The Vulnogram upsert endpoint is
-   idempotent: re-posting the same JSON on a subsequent sync is a
-   no-op on Vulnogram's side. The sync skill does not need to
-   short-circuit "already pushed this JSON" — every successful
-   sync run that re-regenerated the JSON should re-push to keep
-   the record byte-identical to the tracker body.
+5. **Idempotence note.** The contract requires `push_update` to be
+   idempotent: re-posting the same `fields` dict on a subsequent
+   sync is a no-op on the underlying tool's side (the Vulnogram
+   adapter's upsert endpoint satisfies this naturally). The sync
+   skill does not need to short-circuit "already pushed this JSON"
+   — every successful sync run that re-regenerated the JSON should
+   re-push to keep the record byte-identical to the tracker body.
 
-6. **Verify the state advance landed (DRAFT → REVIEW gate).** When
-   step 4 above succeeded **and** the JSON pushed included
-   `body.CNA_private.state = "REVIEW"`, immediately fetch the
-   record to confirm the state actually advanced:
+6. **Verify the state advance landed (`allocated` → `review-ready`
+   gate).** When step 4 above succeeded **and** the JSON pushed
+   included a state field set to the adapter-native equivalent of
+   `review-ready` (for the Vulnogram adapter, that is
+   `body.CNA_private.state = "REVIEW"`), immediately call the
+   adapter's `fetch_current_state(cve_id)` method to confirm the
+   state actually advanced. For the Vulnogram adapter the
+   wire-level entrypoint backing the method is
+   `vulnogram-api-record-fetch`:
 
    ```bash
    uv run --project <framework>/tools/cve-tool-vulnogram/oauth-api vulnogram-api-record-fetch \
      --cve-id <CVE-ID> --jq '.body.CNA_private.state'
    ```
 
-   *(If `vulnogram-api-record-fetch` is not yet available on the
-   operator's machine — the CLI was added together with this
+   *(If the adapter's standalone fetch entrypoint is not yet
+   available on the operator's machine — the Vulnogram adapter's
+   `vulnogram-api-record-fetch` CLI was added together with this
    gate; see [`tools/cve-tool-vulnogram/oauth-api/README.md`](../../../tools/cve-tool-vulnogram/oauth-api/README.md)
-   — fall back to extracting the state from the
-   `record-update` call's response envelope, which already
-   includes the saved `CNA_private.state`.)*
+   — fall back to extracting the state from the `push_update`
+   call's response envelope, which the contract requires to
+   include the saved state.)*
 
-   Three outcomes:
+   The contract specifies that `fetch_current_state` normalises
+   the underlying tool's native state token onto the generic verbs
+   (`allocated`, `review-ready`, `publish-ready`, `public`,
+   `retracted`, `unknown`). Three outcomes:
 
-   - **`"REVIEW"` or any later state (`READY` / `PUBLIC`)** →
-     state-gate clear. Step 5c picks the OAuth-pushed hand-off
-     variant and Step 4 of the *Reconcile* flow posts /
-     PATCH-flips the RM hand-off comment. Step 6 recap notes
-     *"CVE record state auto-promoted to REVIEW at
-     `PUSH_TIMESTAMP`."*
-   - **`"DRAFT"`** → state-gate NOT cleared. Surface the
+   - **`review-ready` or any later state (`publish-ready` /
+     `public`)** → state-gate clear. Step 5c picks the
+     OAuth-pushed hand-off variant and Step 4 of the *Reconcile*
+     flow posts / PATCH-flips the RM hand-off comment. Step 6
+     recap notes *"CVE record state auto-promoted to
+     `review-ready` at `PUSH_TIMESTAMP`."* (for the Vulnogram
+     adapter, named-example aside: *"i.e. `DRAFT` → `REVIEW` in
+     the underlying record"*).
+   - **`allocated`** → state-gate NOT cleared. Surface the
      specific reason: the most common case is one of the body
      fields was empty so the JSON did not include
-     `state = "REVIEW"` in the first place (Stage 1 of the
+     `state = "review-ready"` in the first place (Stage 1 of the
      two-stage gate caught this); the other common case is that
      a body field carried a value the CNA schema rejected
      silently (the upsert saved fields it could parse but did not
@@ -3138,21 +3182,25 @@ Step 6 below describes how to verify the state advance landed
      bullet, and surface the state-gate-not-cleared blocker in
      the Step 6 recap.
    - **Fetch failed (transient HTTP error, session expired
-     between push and fetch)** → conservative fallback: surface
-     the fetch failure as a blocker, post nothing on the
-     RM-hand-off front this run, and retry the verification on
-     the next sync.
+     between push and fetch, or the adapter returned `unknown`)**
+     → conservative fallback: surface the fetch failure as a
+     blocker, post nothing on the RM-hand-off front this run,
+     and retry the verification on the next sync.
 
 ## Step 5c — Reconcile the release-manager hand-off comment
 
 The Step 12 (`pr merged` → `fix released`) **hand-off comment** and
 the Step 14 (advisory archived) **publication-ready notification**
-both come in two variants:
+both come in two variants. The template files live under
+`tools/<cve-tool>/` — the adapter directory named by
+`cve_authority.tool` in `<project-config>/project.md` — so each
+adapter ships variants tuned to its own copy-paste surface and its
+own automated push path:
 
 | Variant | Template | When |
 |---|---|---|
-| Manual-paste (today's default) | [`tools/cve-tool-vulnogram/release-manager-handoff-comment.md`](../../../tools/cve-tool-vulnogram/release-manager-handoff-comment.md), [`tools/cve-tool-vulnogram/release-manager-publication-comment.md`](../../../tools/cve-tool-vulnogram/release-manager-publication-comment.md) | Step 5b skipped (`expired` / `not-configured`) or the push failed |
-| OAuth-pushed | [`tools/cve-tool-vulnogram/release-manager-handoff-comment-oauth-pushed.md`](../../../tools/cve-tool-vulnogram/release-manager-handoff-comment-oauth-pushed.md), [`tools/cve-tool-vulnogram/release-manager-publication-comment-oauth-pushed.md`](../../../tools/cve-tool-vulnogram/release-manager-publication-comment-oauth-pushed.md) | Step 5b's push succeeded this run |
+| Manual-paste (today's default) | `tools/<cve-tool>/release-manager-handoff-comment.md`, `tools/<cve-tool>/release-manager-publication-comment.md` (for the Vulnogram adapter: [`tools/cve-tool-vulnogram/release-manager-handoff-comment.md`](../../../tools/cve-tool-vulnogram/release-manager-handoff-comment.md), [`tools/cve-tool-vulnogram/release-manager-publication-comment.md`](../../../tools/cve-tool-vulnogram/release-manager-publication-comment.md)) | Step 5b skipped (`expired` / `not-configured`) or the push failed |
+| OAuth-pushed | `tools/<cve-tool>/release-manager-handoff-comment-oauth-pushed.md`, `tools/<cve-tool>/release-manager-publication-comment-oauth-pushed.md` (for the Vulnogram adapter: [`tools/cve-tool-vulnogram/release-manager-handoff-comment-oauth-pushed.md`](../../../tools/cve-tool-vulnogram/release-manager-handoff-comment-oauth-pushed.md), [`tools/cve-tool-vulnogram/release-manager-publication-comment-oauth-pushed.md`](../../../tools/cve-tool-vulnogram/release-manager-publication-comment-oauth-pushed.md)) | Step 5b's `push_update` succeeded this run |
 
 Both variants of each comment carry the **same marker** on line 1
 (`<!-- apache-steward: release-manager-handoff v1 -->` for the
@@ -3167,15 +3215,15 @@ rules:
 
 - **First-time hand-off** (no existing comment, label transition
   fires this run) → POST the appropriate variant.
-- **Subsequent sync, OAuth push succeeded this run** → PATCH the
+- **Subsequent sync, `push_update` succeeded this run** → PATCH the
   existing comment to the OAuth-pushed body (refreshing the
   `PUSH_TIMESTAMP` placeholder). If the existing comment is already
   the OAuth-pushed variant, the only material change is the
   timestamp — still PATCH; the timestamp is the audit trail.
-- **Subsequent sync, push failed (or skipped)** → PATCH the existing
-  comment to the manual-paste variant. The RM sees a fresh
-  "please paste" ask the moment the auto-push stops working,
-  which is the right escalation.
+- **Subsequent sync, `push_update` failed (or was skipped)** →
+  PATCH the existing comment to the manual-paste variant. The RM
+  sees a fresh "please paste" ask the moment the auto-push stops
+  working, which is the right escalation.
 - **Subsequent sync, no relevant transition fired and the JSON did
   not change** → no PATCH. Idempotency: marker present, body
   byte-identical, nothing to do.

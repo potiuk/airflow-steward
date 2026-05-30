@@ -31,6 +31,11 @@ license: Apache-2.0
                        (example: airflow-s/airflow-s for the Apache Airflow security team)
      <upstream>       → value of `upstream_repo:` in <project-config>/project.md
                        (example: apache/airflow)
+     <cve-tool>       → adapter directory under `tools/` named by
+                       `cve_authority.tool:` in <project-config>/project.md
+                       (example: cve-tool-vulnogram when `tool: vulnogram`,
+                       i.e. the ASF default that resolves to
+                       `tools/cve-tool-vulnogram/`).
      Before running any bash command below, substitute these with the
      concrete values from the adopting project's <project-config>/project.md. -->
 
@@ -211,13 +216,36 @@ Before any work, verify:
 
    | Detected state | Stop reason |
    |---|---|
-   | `cve allocated` label set, or *CVE tool link* body field populated with a CVE-ID URL | Closing as invalid requires the CVE record to be marked **REJECTED** in Vulnogram first. That is a separate flow (PMC-gated, similar to allocation). Stop and surface the URL of the *CVE tool link* alongside a one-line ask: *"This tracker has CVE `<CVE-ID>` allocated. Reject the CVE in Vulnogram first, then re-invoke this skill."* |
+   | `cve allocated` label set, or *CVE tool link* body field — `cve_authority.record_url_template` substituted with the CVE ID — populated with a CVE-ID URL, **and** `<cve-tool>`'s `fetch_current_state(cve_id)` (per [`tools/cve-tool/README.md`](../../../tools/cve-tool/README.md#fetch_current_statecve_id-to-state-fields)) returns a state of `allocated` or `review-ready` | Closing as invalid requires the CVE record to be **retracted** at the CVE-tool first. That is a separate flow (governance-gated per `governance.cve_allocation_gate`, similar to allocation). Stop and surface the URL of the *CVE tool link* alongside a one-line ask: *"This tracker has CVE `<CVE-ID>` allocated (current state: `<state>`). Retract the CVE record at the CVE-tool first, then re-invoke this skill."* (For the Vulnogram adapter, that's the State dropdown moving from `DRAFT` or `REVIEW` to `REJECTED` — see [`tools/cve-tool-vulnogram/README.md`](../../../tools/cve-tool-vulnogram/README.md).) |
    | `fix released`, `announced - emails sent`, or `announced` label set | The advisory has already shipped (or is mid-flight). Closing as invalid retroactively is a retraction with public consequences. Stop and surface a one-line ask: *"This tracker is past `pr merged` (label: `<label>`). Closing as invalid here would retract a published advisory; escalate to the team before re-invoking."* |
    | Tracker is already `closed` | No-op; surface the existing close reason and stop. |
 
    Both hard stops are deliberate — the skill must not paper over
    a CVE-allocation or a published-advisory state by silently
    labelling and closing.
+
+   The CVE-state probe is generic — it speaks in the four
+   pre-public verbs (`allocated`, `review-ready`, `publish-ready`,
+   `public`) defined in
+   [`tools/cve-tool/README.md` § *Generic state verbs*](../../../tools/cve-tool/README.md#generic-state-verbs).
+   The adapter named in `cve_authority.tool` is responsible for
+   mapping its tool-native state vocabulary onto these verbs.
+   Skill behaviour by returned state:
+
+   - `allocated` or `review-ready` — hard-stop per the table
+     above; the CVE record can still be retracted cleanly, and
+     it MUST be retracted before the tracker is closed as
+     invalid.
+   - `publish-ready` or `public` — escalate to
+     `governance.escalation_contact`; the advisory is mid-flight
+     or already shipped and an invalid close here would be a
+     post-publication retraction with public consequences.
+   - `retracted` — proceed with the invalidate flow; the CVE
+     record is already in its terminal failure state.
+   - `unknown` (returned by the `none` adapter, or when the
+     adapter cannot reach the tool) — fall back to the label /
+     body-field check alone; if either signal is present, surface
+     the gap and ask the user to confirm before proceeding.
 4. **Privacy-LLM contract.** This skill drafts a closing reply
    on the inbound `<security-list>` Gmail thread, so it reads
    the original report's body to mine the team's reasoning

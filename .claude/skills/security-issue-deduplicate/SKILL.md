@@ -26,6 +26,9 @@ license: Apache-2.0
                        (example: airflow-s/airflow-s for the Apache Airflow security team)
      <upstream>       → value of `upstream_repo:` in <project-config>/project.md
                        (example: apache/airflow)
+     <cve-tool>       → CVE-tool adapter directory under `tools/` named by
+                       `cve_authority.tool` in <project-config>/project.md
+                       (example: cve-tool-vulnogram for the ASF default).
      Before running any bash command below, substitute these with the
      concrete values from the adopting project's <project-config>/project.md. -->
 
@@ -177,6 +180,18 @@ does **not** auto-pick. Practical guidance to offer when asked:
   CVSS scoring, PoC code), merge *into* the one with the CVE but
   keep all the rich content via the "Second independent report"
   section described in Step 3 below.
+- If **both** trackers carry an allocated CVE ID, prefer the one
+  whose record is further along the state machine — keep the
+  tracker whose record sits at `publish-ready` over one at
+  `review-ready`, and `review-ready` over `allocated`. Once the
+  kept side is chosen, the duplicate's CVE record is retracted
+  via `<cve-tool>`'s `retract(cve_id, reason)` per
+  [`tools/cve-tool/README.md`](../../../tools/cve-tool/README.md#retractcve_id-reason-to-ok)
+  as part of the Step 5 apply loop. **Refuse the merge** if
+  either CVE record is already `public` — once an advisory has
+  shipped, retroactively folding it into another tracker is an
+  errata announcement (Step 16 of the handling process), not a
+  dedupe.
 
 ---
 
@@ -351,7 +366,7 @@ confirmed, or the placeholder form when unconfirmed; the merge
 does not silently re-synthesize credits)
 
 **Apply the [bot/AI credit policy](../../../tools/cve-tool-vulnogram/bot-credits-policy.md)
-when consolidating.** If either tracker carries a credit line on
+(at `tools/<cve-tool>/bot-credits-policy.md`) when consolidating.** If either tracker carries a credit line on
 the **finder side** (*Reporter credited as*) that matches the bot
 detection rule (`*[bot]` suffix, known-bot list,
 `*-bot`/`*-ai`/`*-agent`/`*-gpt` / `*scanner*` / `*automat*`
@@ -539,12 +554,36 @@ After confirmation, apply **sequentially** (never in parallel):
    (GitHub's `duplicate` close-reason is not exposed by `gh` on
    all versions; `not planned` combined with the `duplicate` label
    carries the same signal)
-6. `uv run --project <framework>/tools/cve-tool-vulnogram/generate-cve-json generate-cve-json <keep> --attach`
+6. `uv run --project <framework>/tools/<cve-tool>/generate-cve-json generate-cve-json <keep> --attach`
    — the *Remediation developer* body field is the source of truth
    for remediation-developer credits (populated by the
    `security-issue-sync` skill from the linked PR's author); no CLI
-   flag needed
-7. For each legacy bot comment folded in steps 2 / 3, delete the
+   flag needed. The regen output is the canonical JSON record for
+   the kept tracker; when the kept tracker already carries an
+   allocated CVE ID, the regenerated record is then fed into
+   `<cve-tool>`'s `push_update(cve_id, fields)` per the contract in
+   [`tools/cve-tool/README.md`](../../../tools/cve-tool/README.md#push_updatecve_id-fields-state_transitionnone-to-diff)
+   so the merged credits + references land on the CVE record itself
+   — the adapter does the storage (for the Vulnogram adapter that's
+   the OAuth-authenticated write to the `#source` tab URL —
+   `cve_authority.source_tab_url_template`). No state transition is
+   passed: dedup never moves the record across state verbs, it only
+   updates fields at whatever state the record is already in
+   (`allocated` / `review-ready` / `publish-ready`). If the kept
+   tracker has no CVE ID, the `push_update` step is skipped and
+   only the tracker-side JSON attachment is regenerated.
+7. **Only when both trackers carried an allocated CVE ID** —
+   retract the dropped side's CVE record via `<cve-tool>`'s
+   `retract(cve_id, reason)` per
+   [`tools/cve-tool/README.md`](../../../tools/cve-tool/README.md#retractcve_id-reason-to-ok),
+   with `reason` set to a short string of the form *"merged into
+   <kept-CVE-ID> per <tracker>#<keep> on <YYYY-MM-DD>"*. This call
+   is governance-gated (the same `governance.cve_allocation_gate`
+   role that gated allocation); the skill surfaces the gate before
+   firing. The contract refuses retraction of any record already
+   at the `public` state — the Step 0 / Inputs pre-check above
+   should already have blocked the merge in that case.
+8. For each legacy bot comment folded in steps 2 / 3, delete the
    original with `gh api -X DELETE
    repos/<tracker>/issues/comments/<id>` — only after the
    matching rollup PATCH succeeded.
@@ -626,6 +665,15 @@ recap before presenting.
 - [`security-issue-sync`](../security-issue-sync/SKILL.md) — runs
   on the kept tracker after the merge to reconcile labels /
   milestone / credit-preference drafts for both reporters.
-- [`generate-cve-json`](../../../tools/cve-tool-vulnogram/generate-cve-json/SKILL.md) —
+- [`generate-cve-json`](../../../tools/cve-tool-vulnogram/generate-cve-json/SKILL.md)
+  (at `tools/<cve-tool>/generate-cve-json/`) —
   regenerates the kept tracker's CVE JSON attachment so both
-  finders land in `credits[]`.
+  finders land in `credits[]`. The regenerated record is fed
+  into `<cve-tool>`'s `push_update` so the merged credits also
+  land on the CVE record itself.
+- [`tools/cve-tool/README.md`](../../../tools/cve-tool/README.md) —
+  the CVE-tool adapter contract that defines the
+  `push_update` and `retract` methods this skill invokes on the
+  kept and dropped sides respectively, plus the generic state
+  verbs (`allocated` / `review-ready` / `publish-ready` /
+  `public`) the skill speaks in.
