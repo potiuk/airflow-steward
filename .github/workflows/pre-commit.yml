@@ -35,10 +35,12 @@ jobs:
         with:
           persist-credentials: false
       # `uv` brings its own Python and is required by both:
-      #  - the per-project prek hooks under
-      #    `tools/{vulnogram/generate-cve-json,gmail/oauth-draft}/`,
-      #    which invoke `uv run --directory ...` for ruff / mypy /
-      #    pytest;
+      #  - the four `workspace-*` prek hooks in
+      #    `.pre-commit-config.yaml`, which call
+      #    `tools/dev/run-workspace-check.sh` to iterate over every
+      #    workspace member declared in the root pyproject's
+      #    `[tool.uv.workspace] members` list and invoke ruff /
+      #    mypy / pytest in each via `uv run --directory`;
       #  - the `uv tool install prek` step below.
       # Minimum uv version is pinned in the root `pyproject.toml`
       # (`[tool.uv] required-version`).
