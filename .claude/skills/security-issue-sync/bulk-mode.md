@@ -59,10 +59,103 @@ concurrently, which is exactly what the sync needs.
    When the selector resolves to zero issues, tell the user and stop
    — do not fall back to `sync all`.
 
+1b. **Pre-flight no-op classifier — skip trackers that obviously need no work.**
+    Before spawning subagents, do one batched read to fetch lightweight
+    state for every resolved tracker, classify each as
+    `dispatch` / `dispatch-urgent` / `skip-noop`, and dispatch
+    subagents only for the non-skipped ones. A no-op skip costs the
+    full ~50 KB subagent transcript per tracker plus the subagent's
+    own per-call API budget; on bulk sweeps where 30–50% of trackers
+    are in steady state, the classifier converts that into one
+    GraphQL round-trip.
+
+    **One query, one round-trip.** Build an aliased multi-field
+    GraphQL query that fetches state for every resolved issue at
+    once:
+
+    ```bash
+    gh api graphql --raw-field query="$(cat <<'GQL'
+    query {
+      repository(owner: "<owner>", name: "<repo>") {
+        i<N1>: issue(number: <N1>) {
+          number state closedAt updatedAt
+          labels(first: 30) { nodes { name } }
+          comments(last: 1) { nodes { author { login } createdAt } }
+        }
+        i<N2>: issue(number: <N2>) { ... }
+        # repeat one aliased block per resolved issue
+      }
+    }
+    GQL
+    )"
+    ```
+
+    The aliased-field form (`i<N>: issue(number: <N>) { ... }`)
+    works for any number of issues in a single query. For a 30-issue
+    bulk sweep the request is ~3 KB and the response is ~6 KB —
+    cheaper than a single subagent transcript.
+
+    **Classification rule table.** Apply the rules **in order**;
+    the first match wins. Conservative by design — `skip-noop`
+    fires only when multiple signals all align.
+
+    | Signals | Decision | Reason recorded in recap |
+    |---|---|---|
+    | `updatedAt` within the last **7 days** | `dispatch` | recent activity safety override — never skip |
+    | Last comment author is **not** a bot AND `createdAt` within last **24h** | `dispatch-urgent` | reporter just replied |
+    | Closed > **30 days** ago AND has `announced` label | `skip-noop` | `post-announce; CVE published` |
+    | Closed > **90 days** ago AND no `announced` label | `skip-noop` | `stale closed (invalid/duplicate/abandoned)` |
+    | Open AND has `cve allocated` + `pr merged` + `announced` AND last comment > 14d ago AND last comment author is a bot | `skip-noop` | `all phases done; awaiting closure heuristic` |
+    | Open AND has `cve allocated` + `pr merged` AND last comment > 14d ago AND last comment author is a bot | `skip-noop` | `awaiting release` |
+    | Anything else | `dispatch` | — |
+
+    **Bot detection.** The "author is a bot" test is *login matches
+    one of*: `github-actions[bot]`, `dependabot[bot]`, the
+    project's `<sync-bot>` handle if configured in
+    [`<project-config>/project.md`](../../../<project-config>/project.md),
+    or any GitHub user with the `[bot]` suffix. If the project has
+    a personal-account bot, list it in the override file at
+    [`.apache-steward-overrides/security-issue-sync.md`](../../../docs/setup/agentic-overrides.md).
+
+    **Hard rules**:
+
+    - **Never silent.** Every `skip-noop` decision appears in the
+      recap under a *"Pre-flight skipped"* group with the rule
+      that fired and the signals it saw. The user can request a
+      forced sync of any skipped tracker by name at confirmation
+      time (*"force-sync #232"*) — the orchestrator then spawns a
+      subagent for that tracker on the next turn.
+    - **Selector overrides default behaviour.** If the user named
+      explicit issue numbers (`sync #232, #233`) rather than a
+      label/state selector, **never skip** — they asked for those
+      specific trackers and a silent skip would be surprising.
+      Pre-flight only applies when the selector resolved to a set
+      (`sync all`, `sync announced`, label/title selectors).
+    - **Opt-out.** Pass `--no-preflight` in the user's selector
+      (e.g. `sync all --no-preflight`) to bypass the classifier
+      entirely and dispatch a subagent for every resolved tracker.
+      Useful for trust-but-verify sweeps after a rule change.
+    - **Dispatch-urgent is just dispatch.** The `dispatch-urgent`
+      decision tells the orchestrator to flag the tracker in the
+      recap as *"recent reporter activity"*, but the subagent it
+      spawns is identical to the normal dispatch path. The
+      distinction is for the operator's attention, not the
+      subagent's behaviour.
+
+    **What pre-flight does NOT do.** It does **not** decide
+    *what action* a tracker needs — that is still the subagent's
+    job. It only decides whether spawning a subagent is worth it
+    at all. A tracker classified as `dispatch` still goes through
+    the full Step 1 (gather) → Step 2 (proposal) flow inside its
+    subagent.
+
 2. **Spawn one subagent per issue, in a single message.** Use the
    `general-purpose` subagent type and send all `Agent` tool calls in
    the **same assistant message** so they run concurrently. For 20
-   issues, that is 20 parallel `Agent` calls in one turn.
+   issues that survived pre-flight, that is 20 parallel `Agent`
+   calls in one turn. Trackers classified as `skip-noop` by Step 1b
+   are **not** dispatched — they only appear in the recap under the
+   *"Pre-flight skipped"* group.
 
    Each subagent prompt must be self-contained and must instruct the
    subagent to:
@@ -99,10 +192,21 @@ concurrently, which is exactly what the sync needs.
      change tracker state but do not alter the published CVE
      record.
 
-4. **Present both buckets as merged bulk proposals; the
+4. **Present buckets as merged bulk proposals; the
    CVE-affecting bucket gets a richer per-item view.** The
-   two buckets are presented to the user differently:
+   proposal has three groups:
 
+   - **Pre-flight skipped** *(if any)* — list every tracker the
+     Step 1b classifier marked `skip-noop`, one per line, with
+     the rule that fired and the signals it saw. Example:
+     `#232 (closed 2025-12-04, announced label) — post-announce; CVE published`.
+     This group is **informational** — the proposal does **not**
+     ask the user to confirm or apply anything for these trackers.
+     The user can request a forced sync of any skipped tracker
+     by name at confirmation (*"force-sync #232"*) and the
+     orchestrator dispatches a subagent for it on the next turn.
+     Render the group at the **top** of the proposal so the user
+     sees the skip context before the proposed actions.
    - **Non-CVE-affecting bucket** — fold into one combined
      proposal, same shape as the legacy bulk mode. The user
      confirms once with `all`, `NN:all`, `NN:1,3`, or per-issue
@@ -151,6 +255,12 @@ concurrently, which is exactly what the sync needs.
    - `<N>:skip` — skip tracker `<N>` entirely.
    - `<N>:edit <item-number>: <new value>` — replace the
      proposed item with a free-form override before applying.
+   - `force-sync <N>` — dispatch a subagent for a tracker that
+     Step 1b classified as `skip-noop`. The orchestrator runs
+     the full Step 1 gather for `<N>` on the next turn and
+     folds its result into the next proposal. Use when the
+     pre-flight heuristic was wrong and you know there's work
+     to do.
    - `cancel` / `none` — apply nothing.
 
    **Proposal order in the merged pack.** Trackers appear in
@@ -231,6 +341,17 @@ or an ambiguous credit line).
 - **Link-form self-check still applies** to the orchestrator's
   merged output — every `#NNN` must be rendered as a clickable link
   per Golden rule 2.
+- **Pre-flight skips are never silent.** Every Step 1b `skip-noop`
+  decision appears explicitly in the proposal's *"Pre-flight
+  skipped"* group with the rule that fired. The user can
+  `force-sync <N>` any of them at confirmation. The opt-out
+  `--no-preflight` flag bypasses Step 1b entirely.
+- **Pre-flight never skips an explicitly-named tracker.** If the
+  user named issue numbers in the selector (`sync #232, #233`),
+  Step 1b only runs the classifier for context (so the recap can
+  surface *"#232 looks idle — sync anyway?"*) but never actually
+  skips. Skip-eligible selectors are state/label/title selectors
+  like `sync all` or `sync announced`.
 
 ### When bulk mode is **not** appropriate
 
