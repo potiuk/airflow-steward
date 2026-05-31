@@ -795,10 +795,12 @@ Separate GitHub workflows:
 - **`zizmor.yml`** — lints GitHub Actions workflows for known-bad
   patterns; runs on every PR.
 - **`link-check.yml`** — runs [lychee](https://lychee.cli.rs/) on
-  every PR and daily on a schedule. **Informational only** today
-  (`continue-on-error: true`) because the tree carries a known set
-  of placeholder / not-yet-created file references; once the
-  baseline reaches zero the workflow flips to a hard gate.
+  every PR and daily on a schedule. **Hard gate** (`fail: true`,
+  `continue-on-error: false`); a single broken internal link or
+  unreachable external URL fails the workflow and blocks merge.
+  Run lychee locally before pushing (see *Before submitting* in
+  [`AGENTS.md`](AGENTS.md#before-submitting)) — the local invocation
+  catches the same errors and avoids a CI round-trip.
 
 To run a single Python package's tests directly:
 
@@ -849,9 +851,9 @@ agent self-eval mode).
 - **PR description:** one `## Summary` section (1–3 bullets of
   *what changed and why*) and one `## Test plan` section (how you
   verified). The `gh pr create` template in this repo matches.
-- **CI gates:** `prek run --all-files` must pass; `zizmor` must
-  pass. `link-check` is informational. All gates run automatically
-  on every PR.
+- **CI gates:** `prek run --all-files`, `zizmor`, `lychee`, and
+  every entry in the `tests-ok` pytest-matrix umbrella must pass.
+  All gates run automatically on every PR.
 - **Reviews:** at least one approval from a repo collaborator. Any
   change that edits [`AGENTS.md`](AGENTS.md), an RFC, or a skill
   file should get an extra set of eyes because those ripple into
